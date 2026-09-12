@@ -55,12 +55,13 @@ export async function postBid(privateKey: `0x${string}`, bid: BidInput) {
 /**
  * THE FOUR-CLAUSE QUERY. This is the one to show a judge.
  *
- *   kind        = str    'bid'
- *   invoiceId   = u256   this invoice
- *   discountBps <= i32   within the issuer's acceptable range   (range filter)
- *   $expiresAt  >  u64   still live                             (system attribute)
+ *   project      = str    this project        (best practice #1)
+ *   kind         = str    'bid'
+ *   invoice_id   = u256   this invoice
+ *   discount_bps <= i32   within the issuer's acceptable range  (range filter)
+ *   $expiresAt   >  u64   still live                        (system attribute)
  *
- * Four clauses across four distinct types, one of them a system attribute -
+ * Five clauses across four distinct types, one of them a system attribute -
  * which is what Arkiv means by "compound filters over typed attributes that do
  * real work, not a lookup by id".
  */
@@ -72,8 +73,8 @@ export async function liveBidsFor(invoiceId: bigint, maxDiscountBps: number): Pr
     .where(
       eq(PROJECT.key, str(PROJECT.value)),
       eq("kind", str(KIND.BID)),
-      eq("invoiceId", u256(invoiceId)),
-      lte("discountBps", i32(maxDiscountBps)),
+      eq("invoice_id", u256(invoiceId)),
+      lte("discount_bps", i32(maxDiscountBps)),
       gt("$expiresAt", u64(block)),
     )
     .limit(50)
@@ -86,11 +87,11 @@ export async function liveBidsFor(invoiceId: bigint, maxDiscountBps: number): Pr
     const { expiresAt } = meta(e);
     return {
       entityKey: e.key,
-      invoiceId: asBigInt(a.invoiceId),
+      invoiceId: asBigInt(a.invoice_id),
       financier: asAddress(a.financier),
-      discountBps: asNumber(a.discountBps),
-      offerPrice: asDecimalString(a.offerPrice),
-      ensName: asString(a.ensName),
+      discountBps: asNumber(a.discount_bps),
+      offerPrice: asDecimalString(a.offer_price),
+      ensName: asString(a.ens_name),
       expiresAtBlock: expiresAt,
       secondsLeft: secondsUntil(expiresAt, block),
     };
@@ -184,7 +185,7 @@ export async function openBids(invoiceId: bigint) {
     .where(
       eq(PROJECT.key, str(PROJECT.value)),
       eq("kind", str(KIND.BID)),
-      eq("invoiceId", u256(invoiceId)),
+      eq("invoice_id", u256(invoiceId)),
       gt("$expiresAt", u64(block)),
       not(exists("withdrawn")),
     )
