@@ -6,30 +6,48 @@
  * browser. There is no Bee node to run and nothing to install, which is why
  * Factor can put real documents on Swarm inside a hackathon.
  *
- * CORRECTION worth recording, because the docs led us wrong: an earlier pass of
- * this file claimed feeds and ACT require a running Bee node and are unavailable
- * to a dApp. That is FALSE. Verified against the v0.4.0 source
- * (github.com/snaha/swarm-id, lib/src/swarm-id-client.ts), `SwarmIdClient`
- * exposes all of:
+ * ── WHY THE IMPORT IS LAZY ────────────────────────────────────────────────
  *
- *   makeSequentialFeedReader/Writer   makeEpochFeedReader/Writer
- *   makeSOCReader/Writer              createFeedManifest
- *   gsocMine / gsocSend               uploadChunk / downloadChunk
- *   actUploadData / actDownloadData / actAddGrantees
- *   deriveAppSecret                   getPostageBatch / isBeeConnected
+ * `@snaha/swarm-id` CANNOT be imported on the server. It bundles axios, whose
+ * FormData shim runs during module initialisation:
  *
- * So Swarm can hold mutable state in the browser after all. Factor still keeps
- * its index in Arkiv, but for the honest reason rather than the wrong one: a
- * feed gives you a mutable POINTER, while the market needs a mutable,
- * QUERYABLE set - "unsold logistics invoices over 5,000 maturing inside 90
- * days" is a compound filter over typed attributes, which no feed answers.
+ *     "object" == typeof self ? self.FormData : window.FormData
  *
- * The one limit that does still bind:
- *   `{ encrypt: true }` embeds the decryption key inside the 128-character
- *   reference. The reference IS the capability, so it must never be written to
- *   a public index - see ./seal.ts.
+ * Under Node there is no `self`, so it falls through to `window.FormData` and
+ * throws `ReferenceError: window is not defined`. This happens at REQUIRE
+ * time, before any component renders, which means a plain top-level
+ * `import { SwarmIdClient } from "@snaha/swarm-id"` breaks `next build` during
+ * the prerender pass of any page that touches this file — even a
+ * `"use client"` page, because Next still renders client components on the
+ * server to produce the initial HTML.
+ *
+ * Verified by importing the published bundle in bare Node: it reproduces the
+ * exact ReferenceError and call chain seen in the Vercel log.
+ *
+ * The fix: `import type` (erased at compile time, zero runtime cost) plus a
+ * dynamic `await import()` inside `initSwarm`, which only ever runs in a
+ * browser. Do NOT convert these back to a static import.
+ *
+ * ── OTHER NOTES ──────────────────────────────────────────────────────────
+ *
+ * An earlier version of this file claimed feeds and ACT require a running Bee
+ * node and are unavailable to a dApp. That is FALSE. Verified against the
+ * v0.4.0 source, `SwarmIdClient` also exposes makeSequentialFeedReader/Writer,
+ * makeEpochFeedReader/Writer, makeSOCReader/Writer, createFeedManifest,
+ * gsocMine/gsocSend, uploadChunk/downloadChunk, actUploadData/actDownloadData/
+ * actAddGrantees and deriveAppSecret — all without a node.
+ *
+ * Factor still keeps its index in Arkiv, but for the honest reason: a feed
+ * gives you a mutable POINTER, while the market needs a mutable, QUERYABLE
+ * set, which no number of feeds answers.
+ *
+ * The one limit that does still bind: `{ encrypt: true }` embeds the
+ * decryption key inside the 128-character reference. The reference IS the
+ * capability, so it must never be written to a public index — see ./seal.ts.
  */
-import { SwarmIdClient } from "@snaha/swarm-id";
+
+// Type-only: erased by the compiler, so nothing is required at runtime.
+import type { SwarmIdClient, ConnectionInfo } from "@snaha/swarm-id";
 
 export type UploadMode = "user-stamp" | "subsidised" | "unavailable";
 
@@ -42,37 +60,78 @@ export interface SwarmIdentity {
 }
 
 let client: SwarmIdClient | null = null;
+let initialising: Promise<SwarmIdClient> | null = null;
 
-export function getSwarmClient(onChange?: (info: any) => void): SwarmIdClient {
+function assertBrowser(fn: string): void {
+  if (typeof window === "undefined") {
+    throw new Error(
+      `${fn} is browser-only: @snaha/swarm-id bundles axios, which touches ` +
+        `window.FormData while initialising. Call it from an effect or an ` +
+        `event handler, never during render or on the server.`,
+    );
+  }
+}
+
+/**
+ * Create and initialise the Swarm ID client. Must run before anything else —
+ * it creates the hidden iframe that holds all key material.
+ *
+ * Safe to call more than once: concurrent callers share one in-flight promise.
+ */
+export async function initSwarm(
+  onChange?: (info: ConnectionInfo) => void,
+): Promise<SwarmIdClient> {
+  assertBrowser("initSwarm");
   if (client) return client;
+  if (initialising) return initialising;
 
-  client = new SwarmIdClient({
-    iframeOrigin: "https://swarm-id.snaha.net",
-    metadata: {
-      name: "Factor",
-      description: "Invoice financing where the document stays yours",
-    },
-    // If the gift code does not give end users their own postage batch, set a
-    // subsidised gateway so the app pays and `canUpload` is never false:
-    // subsidisedGatewayUrl: process.env.NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY,
-    onConnectionChange: (info: any) => onChange?.(info),
-  });
+  initialising = (async () => {
+    // The dynamic import is the whole point — see the header comment.
+    const { SwarmIdClient: Ctor } = await import("@snaha/swarm-id");
 
+    const c = new Ctor({
+      iframeOrigin: "https://swarm-id.snaha.net",
+      metadata: {
+        name: "Factor",
+        description: "Invoice financing where the document stays yours",
+      },
+      // If the gift code does not give end users their own postage batch, set
+      // a subsidised gateway so the app pays and `canUpload` is never false:
+      subsidisedGatewayUrl: process.env.NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY,
+      onConnectionChange: (info: ConnectionInfo) => onChange?.(info),
+    });
+
+    await c.initialize();
+    client = c;
+    return c;
+  })();
+
+  try {
+    return await initialising;
+  } catch (e) {
+    initialising = null; // let a later attempt retry
+    throw e;
+  }
+}
+
+/** The initialised client, or a clear error explaining what was skipped. */
+function required(fn: string): SwarmIdClient {
+  assertBrowser(fn);
+  if (!client) {
+    throw new Error(`${fn} called before initSwarm() finished. Await initSwarm() first.`);
+  }
   return client;
 }
 
-/** Must run before anything else - it creates the hidden iframe. */
-export async function initSwarm(onChange?: (info: any) => void) {
-  const c = getSwarmClient(onChange);
-  await c.initialize();
-  return c;
-}
-
 /** Opens the passkey / SIWE popup. */
-export async function connectSwarm() {
-  const c = getSwarmClient();
+export async function connectSwarm(): Promise<ConnectionInfo> {
+  const c = client ?? (await initSwarm());
   await c.connect();
   return c.connectionInfo;
+}
+
+export function connectionInfo(): ConnectionInfo | null {
+  return client ? client.connectionInfo : null;
 }
 
 /**
@@ -80,8 +139,10 @@ export async function connectSwarm() {
  * still have `canUpload === false`, because they have no postage batch and the
  * app set no subsidised gateway. Surface that as a real message rather than a
  * silent failure.
+ *
+ * Pure and synchronous, so it is safe to call during render.
  */
-export function uploadBlockedReason(info: any): string | null {
+export function uploadBlockedReason(info: ConnectionInfo | null | undefined): string | null {
   if (!info) return "Swarm ID not initialised yet.";
   if (!info.identity) return "Not signed in to Swarm ID.";
   if (info.canUpload) return null;
@@ -102,7 +163,7 @@ export function uploadBlockedReason(info: any): string | null {
  * counterparty names, no line items and no exact amounts.
  */
 export async function uploadTeaser(summary: object): Promise<{ reference: string }> {
-  const c = getSwarmClient();
+  const c = required("uploadTeaser");
   const bytes = new TextEncoder().encode(JSON.stringify(summary, null, 2));
   // deferred: false - the default returns a reference BEFORE the data is
   // network-available, which makes a fresh document 404 mid-demo.
@@ -115,17 +176,15 @@ export async function uploadTeaser(summary: object): Promise<{ reference: string
  * to it on-chain, seal it to the buyer, but never publish it.
  */
 export async function uploadInvoiceDocument(file: File): Promise<{ reference: string }> {
-  const c = getSwarmClient();
-  return c.uploadFile(file, file.name);
+  const c = required("uploadInvoiceDocument");
+  return c.uploadFile(file, file.name, { encrypt: true, deferred: false });
 }
 
 export async function downloadDocument(reference: string) {
-  const c = getSwarmClient();
-  return c.downloadFile(reference);
+  return required("downloadDocument").downloadFile(reference);
 }
 
 export async function downloadJson<T = unknown>(reference: string): Promise<T> {
-  const c = getSwarmClient();
-  const data = await c.downloadData(reference);
+  const data = await required("downloadJson").downloadData(reference);
   return JSON.parse(new TextDecoder().decode(data)) as T;
 }
