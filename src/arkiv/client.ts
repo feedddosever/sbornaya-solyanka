@@ -23,15 +23,29 @@ export const ARKIV_WS = "wss://rpc.tiramisu.db-chain.testnet.arkiv.network";
  *  lifetime to a user as "one minute" - read `$expiresAt` back instead. */
 export const ARKIV_BLOCK_TIME_SECONDS = 2;
 
+/**
+ * Optional access key. The public RPC works without one at a default rate
+ * limit, and a key only raises that limit — but a deployed app whose clients
+ * poll the bid book every few seconds will hit the default ceiling quickly, so
+ * set one before demoing anything public.
+ *
+ * Get it from hub.arkiv.network/api-keys (one key per wallet per network;
+ * choose Tiramisu). The RPC accepts it in the URL path, as `X-API-KEY`, or as
+ * a bearer token; the path form is used here because it needs no custom
+ * transport config.
+ */
+const ARKIV_KEY = process.env.ARKIV_API_KEY ?? process.env.NEXT_PUBLIC_ARKIV_API_KEY;
+const rpcUrl = ARKIV_KEY ? `${ARKIV_RPC}/${ARKIV_KEY}` : undefined;
+
 export const arkivPublic = createPublicClient({
   chain: tiramisu,
-  transport: http(),
+  transport: http(rpcUrl),
 });
 
 export function arkivWallet(privateKey: `0x${string}`) {
   return createWalletClient({
     chain: tiramisu,
-    transport: http(),
+    transport: http(rpcUrl),
     account: privateKeyToAccount(privateKey),
   });
 }
