@@ -89,17 +89,36 @@ export async function initSwarm(
     // The dynamic import is the whole point — see the header comment.
     const { SwarmIdClient: Ctor } = await import("@snaha/swarm-id");
 
-    const c = new Ctor({
+    /**
+     * OMIT `subsidisedGatewayUrl` UNLESS IT IS A REAL URL.
+     *
+     * Swarm ID validates its options with zod and the field is typed as a
+     * URL, so passing an empty string — which is exactly what
+     * `process.env.NEXT_PUBLIC_*` yields when the variable exists but is
+     * blank — fails validation and takes down the whole `initialize()` call:
+     *
+     *   Swarm ID init failed: Invalid message format:
+     *     path: ["subsidisedGatewayUrl"], format: "url"
+     *
+     * That is a total failure of the Swarm layer caused by an unset optional
+     * setting, and it bit this deployment. Copying `.env.example` into a host
+     * creates the variable as an empty string, which is the common case. So
+     * the key is only added when there is something valid to put in it.
+     */
+    const gateway = process.env.NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY?.trim();
+    const options: Record<string, unknown> = {
       iframeOrigin: "https://swarm-id.snaha.net",
       metadata: {
         name: "Factor",
         description: "Invoice financing where the document stays yours",
       },
-      // If the gift code does not give end users their own postage batch, set
-      // a subsidised gateway so the app pays and `canUpload` is never false:
-      subsidisedGatewayUrl: process.env.NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY,
       onConnectionChange: (info: ConnectionInfo) => onChange?.(info),
-    });
+    };
+    if (gateway && /^https?:\/\/\S+$/i.test(gateway)) {
+      options.subsidisedGatewayUrl = gateway;
+    }
+
+    const c = new Ctor(options as never);
 
     await c.initialize();
     client = c;
