@@ -37,16 +37,26 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  // Two financier keys, so bids have different `$owner` values and
-  // `ownedBy()` filtering is meaningful rather than constant.
-  const pk =
-    body.financierSlot === 2
-      ? (process.env.ARKIV_FIN2_PK as `0x${string}`)
-      : (process.env.ARKIV_FIN1_PK as `0x${string}`);
+  // ONE FUNDED KEY IS ENOUGH.
+  //
+  // Whose bid this is comes from the `financier` ATTRIBUTE, not from `$owner`
+  // — the signing key is Factor's either way, because keys stay server-side.
+  // So the slot only picks a signer when more than one is configured; with a
+  // single funded wallet every row is written by it and nothing downstream
+  // cares. See the note on myLiveBids in src/arkiv/bids.ts.
+  const preferred =
+    body.financierSlot === 2 ? process.env.ARKIV_FIN2_PK : process.env.ARKIV_FIN1_PK;
+  const pk = (preferred ||
+    process.env.ARKIV_FIN1_PK ||
+    process.env.ARKIV_ISSUER_PK) as `0x${string}` | undefined;
 
   if (!pk) {
     return NextResponse.json(
-      { error: "ARKIV_FIN1_PK / ARKIV_FIN2_PK not configured" },
+      {
+        error:
+          "No Arkiv signing key configured. Set ARKIV_FIN1_PK (one funded " +
+          "Tiramisu key is enough; ARKIV_FIN2_PK and ARKIV_ISSUER_PK are optional).",
+      },
       { status: 500 },
     );
   }
