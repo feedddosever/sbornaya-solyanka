@@ -107,11 +107,56 @@ npm run dev
 # 3. ENSv2 (one-time, before demoing)
 npx tsx scripts/ens-setup.ts
 
-# 4. the Mission 02 proof, runnable on demand
-npx tsx scripts/evidence.ts
+# 4. the Mission 02 proof, runnable on demand — two independent versions
+npx tsx scripts/evidence.ts            # through the app's own query layer
+python3 scripts/evidence-rpc.py        # straight at the JSON-RPC, no SDK
 ```
 
 **Funding, all of which has latency — do it first:** Fuji AVAX from `core.app/tools/testnet-faucet` (needs a mainnet AVAX balance or an Avalanche Guild coupon; 2 AVAX per 24h), Arkiv GLM from `hub.arkiv.network`, Sepolia ETH **plus MockUSDC** (the ENSv2 ETHRegistrar charges MockUSDC, not ETH).
+
+Health check for the Arkiv wiring — signer address, whether it is funded, and
+whether every attribute name this build writes will be accepted by the engine:
+`GET /api/arkiv/health`.
+
+---
+
+## Mission 02, verified
+
+Arkiv asks for "the same query before and after the boundary, with no delete
+call in between". Below is a real run on Tiramisu. Every number is checkable
+against the chain.
+
+```
+query : project = str('factor-invoice-market-ethrome-2026')
+        AND kind = str('bid')
+        AND invoice_id = u256(8889)
+        AND discount_bps <= i32(10000)
+        AND $expiresAt > u64(<current block>)
+
+block 356093  write a bid, lifetime 40s
+              entity 0x1f89e5fbeeb0569b35f4e625f3f50191b21fb2cdc66956d0b8ae9e8879e84412
+              tx     0xa9235a9715f433f41bef77613b869e453512d89408236827e91ba9c149b07651
+              createdAt 356095   expiresAt 356115   (+20 blocks = 40s exactly)
+
+block 356097  query -> 1 bid     BEFORE
+block 356116  query -> 0 bids    AFTER
+block 356097  same query, atBlock=356097 -> 1 bid    still there historically
+
+delete calls made: 0
+```
+
+The third read is the one that closes the argument. Without it, "the bid is
+gone" is equally consistent with "the bid was never really indexed". The
+point-in-time read shows the entity genuinely occupied the index at 356097 and
+had left by 356116, with nothing deleting it — expiry is the only mechanism
+involved, and it is the feature, not a cleanup job.
+
+`scripts/evidence-rpc.py` produced this by talking to the JSON-RPC directly
+rather than through Factor's own read path. That independence is deliberate:
+during development a half-deployed build wrote `snake_case` attribute names
+while querying `camelCase` ones, so the app reported an empty market while the
+data was sitting in the index perfectly readable. A witness that shares the
+app's query layer cannot catch that class of bug. This one can.
 
 ---
 
