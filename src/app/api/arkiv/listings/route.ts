@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { discover, publishListing } from "@/arkiv/listings";
+import { cleanKey } from "@/arkiv/client";
 import type { Sector } from "@/arkiv/schema";
 import {
   asAddress,
@@ -61,9 +62,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const b = await req.json();
   // One funded Tiramisu key is enough for the whole app.
-  const pk = (process.env.ARKIV_ISSUER_PK || process.env.ARKIV_FIN1_PK) as
-    | `0x${string}`
-    | undefined;
+  const pk = cleanKey(process.env.ARKIV_ISSUER_PK) || cleanKey(process.env.ARKIV_FIN1_PK);
   if (!pk) {
     return NextResponse.json(
       { error: "No Arkiv signing key configured. Set ARKIV_ISSUER_PK or ARKIV_FIN1_PK." },
