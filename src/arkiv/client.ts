@@ -42,11 +42,22 @@ export const arkivPublic = createPublicClient({
   transport: http(rpcUrl),
 });
 
+/**
+ * Read a signing key from the environment, tolerating the single most common
+ * paste error: a trailing newline. Copying a key out of a terminal or a hub UI
+ * very often brings one along, and viem rejects it with an opaque message.
+ */
+export function cleanKey(raw: string | undefined): `0x${string}` | undefined {
+  if (!raw) return undefined;
+  const t = raw.trim();
+  return t ? (t as `0x${string}`) : undefined;
+}
+
 export function arkivWallet(privateKey: `0x${string}`) {
   return createWalletClient({
     chain: tiramisu,
     transport: http(rpcUrl),
-    account: privateKeyToAccount(privateKey),
+    account: privateKeyToAccount((privateKey as string).trim() as `0x${string}`),
   });
 }
 
