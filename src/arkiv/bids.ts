@@ -10,6 +10,7 @@ import { i32, str, u256, u64 } from "@arkiv-network/sdk/attr";
 import { ExpirationTime, jsonToPayload } from "@arkiv-network/sdk/utils";
 import { arkivPublic, arkivWallet, currentBlock, secondsUntil } from "./client";
 import { bidAttributes, KIND, type BidInput } from "./schema";
+import { PROJECT } from "./project";
 import {
   asAddress,
   asBigInt,
@@ -69,6 +70,7 @@ export async function liveBidsFor(invoiceId: bigint, maxDiscountBps: number): Pr
   const page = await arkivPublic
     .select({ key: true, attributes: true, payload: true })
     .where(
+      eq(PROJECT.key, str(PROJECT.value)),
       eq("kind", str(KIND.BID)),
       eq("invoiceId", u256(invoiceId)),
       lte("discountBps", i32(maxDiscountBps)),
@@ -111,7 +113,8 @@ export async function myLiveBids(financier: `0x${string}`) {
   const block = await currentBlock();
   const page = await arkivPublic
     .select({ key: true, attributes: true })
-    .where(eq("kind", str(KIND.BID)), gt("$expiresAt", u64(block)))
+    .where(eq(PROJECT.key, str(PROJECT.value)),
+      eq("kind", str(KIND.BID)), gt("$expiresAt", u64(block)))
     .ownedBy(financier)
     .limit(100)
     .fetch();
@@ -132,6 +135,7 @@ export async function openBids(invoiceId: bigint) {
   return arkivPublic
     .select({ key: true, attributes: true })
     .where(
+      eq(PROJECT.key, str(PROJECT.value)),
       eq("kind", str(KIND.BID)),
       eq("invoiceId", u256(invoiceId)),
       gt("$expiresAt", u64(block)),
