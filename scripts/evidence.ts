@@ -17,15 +17,34 @@ import { str, u256 } from "@arkiv-network/sdk/attr";
 import { arkivPublic, currentBlock, ARKIV_BLOCK_TIME_SECONDS } from "../src/arkiv/client";
 import { postBid } from "../src/arkiv/bids";
 import { KIND } from "../src/arkiv/schema";
+import { PROJECT } from "../src/arkiv/project";
 
 const TTL_SECONDS = 30; // must be even
 const INVOICE_ID = BigInt(process.env.EVIDENCE_INVOICE_ID ?? "1");
 
-/** The query under test. Identical at every block height - only `.atBlock()` moves. */
+/**
+ * The query under test. Identical at every block height - only `.atBlock()` moves.
+ *
+ * The `project` clause is load-bearing HERE IN PARTICULAR, not just good
+ * hygiene: this script proves a claim about a COUNT going down. Forty teams
+ * share this testnet, so without it another team's bid carrying the same
+ * `invoice_id` lands in the same result set, and the before/after numbers stop
+ * being about Factor's entity at all. An evidence script that can be polluted
+ * by a stranger is not evidence.
+ *
+ * Attribute names are snake_case because the node rejects uppercase after the
+ * first character even though the SDK's validator accepts it. `invoiceId` here
+ * would not error - it would just match nothing, quietly reporting 0 -> 0 and
+ * an INCONCLUSIVE result for a mechanism that actually works.
+ */
 function bidQuery(atBlock: bigint) {
   return arkivPublic
     .select({ key: true, attributes: true })
-    .where(eq("kind", str(KIND.BID)), eq("invoiceId", u256(INVOICE_ID)))
+    .where(
+      eq(PROJECT.key, str(PROJECT.value)),
+      eq("kind", str(KIND.BID)),
+      eq("invoice_id", u256(INVOICE_ID)),
+    )
     .atBlock(atBlock)
     .fetch();
 }
@@ -81,7 +100,9 @@ async function main() {
     after.entities.length < before.entities.length
       ? "\n  PASS - the entity left the index on its own.\n"
       : "\n  INCONCLUSIVE - wait longer, or check whether the engine still\n" +
-          "  returns expired entities (undocumented; see friction.md #7).\n",
+          "  returns expired entities. Block production is not a clock, so a\n" +
+          "  requested lifetime in seconds can lapse later than the wall clock\n" +
+          "  suggests; see the duration-helpers item in friction.md.\n",
   );
 }
 
