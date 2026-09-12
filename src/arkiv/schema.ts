@@ -10,14 +10,35 @@
  * Hard limits from the SDK:
  *   - 32 attributes per entity
  *   - 128 KB payload (MAX_PAYLOAD_BYTES = 131072)
- *   - attribute names: <=32 bytes, /^[A-Za-z][A-Za-z0-9._-]*$/, no leading `$`,
- *     and MUST NOT contain `--` (it opens a comment in the query language, so
- *     such a name writes fine then silently corrupts any query filtering on it)
+ *   - attribute names: <=32 bytes, no leading `$`, and MUST NOT contain `--`
+ *     (it opens a comment in the query language, so such a name writes fine
+ *     then silently corrupts any query filtering on it). The documented
+ *     grammar is /^[A-Za-z][A-Za-z0-9._-]*$/ but the node is STRICTER than
+ *     that - see the snake_case note below, which cost a debugging round.
  *   - gt/gte/lt/lte only work on ordered types: i32, u64, u256, dec
  *   - no sort, no count; a zero-filter query throws InvalidPredicateError
  */
 import { addr, bool, bytes32, dec, i32, str, u256, u64 } from "@arkiv-network/sdk/attr";
 import { PROJECT } from "./project";
+
+/**
+ * ATTRIBUTE NAMES ARE snake_case, AND THAT IS NOT A STYLE CHOICE.
+ *
+ * The node rejects an uppercase letter anywhere after the first character:
+ *
+ *   Transaction failed: an attribute name holds "B" (0x42) at byte 8, which is
+ *   outside the name charset ("A"-"Z", "a"-"z", "0"-"9", ".", "-" and "_",
+ *   with a letter first)
+ *
+ * That was `discountBps`. Note the message lists "A"-"Z" as permitted and then
+ * refuses a capital B, so the real rule is narrower than both the message and
+ * the documented `Ident32` grammar suggest. Found only by an actual write -
+ * nothing in the type system or the docs catches it. Every example in Arkiv's
+ * own best-practices guide is snake_case, which in hindsight was the hint.
+ *
+ * The TypeScript input interfaces below stay camelCase; only the on-chain
+ * attribute NAMES are snake_case.
+ */
 
 /** Entity kinds. `kind` partitions the namespace so every query has a cheap
  *  first clause and we never rely on a filter-less scan. */
@@ -51,18 +72,18 @@ export function listingAttributes(l: ListingInput) {
     // Best practice #1: on EVERY entity, or other teams' rows leak in.
     [PROJECT.key]: str(PROJECT.value),
     kind: str(KIND.LISTING),
-    invoiceId: u256(l.invoiceId),
+    invoice_id: u256(l.invoiceId),
     issuer: addr(l.issuer),
     debtor: addr(l.debtor),
     sector: str(l.sector),
-    faceValue: dec(l.faceValue), // dec so financiers can range-filter
-    dueDate: u64(l.dueDate), // u64 so horizon filters work
-    ratingBand: i32(l.ratingBand),
-    teaserRef: str(l.teaserRef),
-    docCommit: bytes32(l.docCommit),
-    claimContract: addr(l.claimContract),
-    chainId: i32(43113), // makes the cross-chain link explicit and queryable
-    ensName: str(l.ensName),
+    face_value: dec(l.faceValue), // dec so financiers can range-filter
+    due_date: u64(l.dueDate), // u64 so horizon filters work
+    rating_band: i32(l.ratingBand),
+    teaser_ref: str(l.teaserRef),
+    doc_commit: bytes32(l.docCommit),
+    claim_contract: addr(l.claimContract),
+    chain_id: i32(43113), // makes the cross-chain link explicit and queryable
+    ens_name: str(l.ensName),
     sold: bool(l.sold),
   };
 }
@@ -85,12 +106,12 @@ export function bidAttributes(b: BidInput) {
   return {
     [PROJECT.key]: str(PROJECT.value),
     kind: str(KIND.BID),
-    invoiceId: u256(b.invoiceId),
+    invoice_id: u256(b.invoiceId),
     financier: addr(b.financier),
-    discountBps: i32(b.discountBps),
-    offerPrice: dec(b.offerPrice),
+    discount_bps: i32(b.discountBps),
+    offer_price: dec(b.offerPrice),
     sector: str(b.sector),
-    ensName: str(b.ensName),
+    ens_name: str(b.ensName),
   };
 }
 
@@ -109,7 +130,7 @@ export function handoverAttributes(h: HandoverInput) {
   return {
     [PROJECT.key]: str(PROJECT.value),
     kind: str(KIND.HANDOVER),
-    invoiceId: u256(h.invoiceId),
+    invoice_id: u256(h.invoiceId),
     recipient: addr(h.recipient),
   };
 }
