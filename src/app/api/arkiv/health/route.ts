@@ -15,17 +15,89 @@ import { NextResponse } from "next/server";
 import { privateKeyToAccount } from "viem/accounts";
 import { eq } from "@arkiv-network/sdk/query";
 import { str } from "@arkiv-network/sdk/attr";
-import { arkivPublic, ARKIV_CHAIN_ID, ARKIV_RPC, ARKIV_WS } from "@/arkiv/client";
+import { arkivPublic, cleanKey, ARKIV_CHAIN_ID, ARKIV_RPC, ARKIV_WS } from "@/arkiv/client";
 import { PROJECT } from "@/arkiv/project";
 import { KIND } from "@/arkiv/schema";
 
 export const dynamic = "force-dynamic"; // never cache a health check
 
+/**
+ * Describe the SHAPE of a secret without revealing it.
+ *
+ * A private key is 0x + 64 hex characters (66 total). An Arkiv access key is
+ * ~41 characters and not hex. Those two get pasted into each other's field
+ * constantly, and from the outside both look like "some key", so the fastest
+ * possible diagnosis is a shape report.
+ *
+ * Length, a 0x prefix flag and a hex-charset flag leak nothing usable: they
+ * are properties every key of that type shares. No part of the value itself
+ * is ever returned.
+ */
+function shape(name: string, raw: string | undefined) {
+  if (raw === undefined) return { name, present: false, note: "Variable is not set at all." };
+  if (raw === "") {
+    return {
+      name,
+      present: true,
+      empty: true,
+      note:
+        "Variable exists but is an EMPTY STRING. In Vercel this usually means it " +
+        "was re-saved while the input was blank - a Sensitive variable hides its " +
+        "value after saving, so editing and saving again wipes it. Delete the " +
+        "variable and create it fresh.",
+    };
+  }
+
+  const trimmed = raw.trim();
+  const body = trimmed.startsWith("0x") ? trimmed.slice(2) : trimmed;
+  const isHex = /^[0-9a-fA-F]+$/.test(body);
+  const validPrivateKey = /^0x[0-9a-fA-F]{64}$/.test(trimmed);
+
+  let diagnosis: string;
+  // Whitespace FIRST: a trailing newline still trims to a valid key, so
+  // checking validity before whitespace would call a broken value "correct".
+  // The app trims defensively, so this is a warning rather than a failure.
+  if (raw !== trimmed) {
+    diagnosis = validPrivateKey
+      ? "Valid key, but it has leading/trailing whitespace or a newline. The app " +
+        "trims it so this still works - worth cleaning up anyway."
+      : "Has leading or trailing whitespace or a newline, and is not a valid key " +
+        "even after trimming. Re-paste it.";
+  } else if (validPrivateKey) {
+    diagnosis = "Correct shape for a private key.";
+  } else if (isHex && body.length === 64 && !trimmed.startsWith("0x")) {
+    diagnosis = "64 hex characters but MISSING the 0x prefix. Add 0x at the front.";
+  } else if (isHex && body.length === 40) {
+    diagnosis = "This is a wallet ADDRESS (40 hex), not a private key.";
+  } else if (!isHex) {
+    diagnosis =
+      "Not hexadecimal, so this is not a private key. At ~41 characters it is " +
+      "almost certainly the Arkiv ACCESS key pasted into the signing-key field.";
+  } else {
+    diagnosis = `Hexadecimal but ${body.length} characters after the prefix; a private key needs exactly 64.`;
+  }
+
+  return {
+    name,
+    present: true,
+    length: raw.length,
+    startsWith0x: trimmed.startsWith("0x"),
+    hexOnly: isHex,
+    hasSurroundingWhitespace: raw !== trimmed,
+    validPrivateKey,
+    diagnosis,
+  };
+}
+
 export async function GET() {
   const started = Date.now();
 
+  // Trimmed, exactly as the write paths read it, so health and the app can
+  // never disagree about whether a key is usable.
   const signingKey =
-    process.env.ARKIV_FIN1_PK || process.env.ARKIV_ISSUER_PK || process.env.ARKIV_FIN2_PK;
+    cleanKey(process.env.ARKIV_FIN1_PK) ||
+    cleanKey(process.env.ARKIV_ISSUER_PK) ||
+    cleanKey(process.env.ARKIV_FIN2_PK);
   const accessKey = process.env.ARKIV_API_KEY || process.env.NEXT_PUBLIC_ARKIV_API_KEY;
 
   const report: Record<string, unknown> = {
@@ -39,6 +111,14 @@ export async function GET() {
         : "Not set. The public RPC still works, but a deployed demo will be throttled. Get one at hub.arkiv.network/api-keys (pick Tiramisu).",
     },
     signer: { configured: Boolean(signingKey) },
+    // Shape report for every key variable. This is what tells you WHICH
+    // mistake was made, without printing any secret.
+    envShapes: [
+      shape("ARKIV_FIN1_PK", process.env.ARKIV_FIN1_PK),
+      shape("ARKIV_ISSUER_PK", process.env.ARKIV_ISSUER_PK),
+      shape("ARKIV_FIN2_PK", process.env.ARKIV_FIN2_PK),
+      shape("ARKIV_API_KEY", process.env.ARKIV_API_KEY),
+    ],
     checks: {} as Record<string, unknown>,
   };
 
@@ -49,9 +129,9 @@ export async function GET() {
       report.signer = {
         configured: true,
         address: account.address,
-        which: process.env.ARKIV_FIN1_PK
+        which: cleanKey(process.env.ARKIV_FIN1_PK)
           ? "ARKIV_FIN1_PK"
-          : process.env.ARKIV_ISSUER_PK
+          : cleanKey(process.env.ARKIV_ISSUER_PK)
             ? "ARKIV_ISSUER_PK"
             : "ARKIV_FIN2_PK",
         note: "Fund THIS address with GLM at hub.arkiv.network. Reads work without funds; writes do not.",
