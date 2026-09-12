@@ -17,7 +17,7 @@ import { eq } from "@arkiv-network/sdk/query";
 import { str } from "@arkiv-network/sdk/attr";
 import { arkivPublic, cleanKey, ARKIV_CHAIN_ID, ARKIV_RPC, ARKIV_WS } from "@/arkiv/client";
 import { PROJECT } from "@/arkiv/project";
-import { KIND } from "@/arkiv/schema";
+import { KIND, bidAttributes, handoverAttributes, listingAttributes } from "@/arkiv/schema";
 
 export const dynamic = "force-dynamic"; // never cache a health check
 
@@ -163,7 +163,90 @@ export async function GET() {
     return NextResponse.json({ ok: false, ...report, ms: Date.now() - started }, { status: 503 });
   }
 
-  // 2. Does a real, project-scoped query return? Counts our own rows only.
+  // 2. Can the signer actually pay for a write?
+  //
+  // Reads need no funds; writes need GLM. This was the one question this
+  // endpoint could not answer — it had to be checked by hand with
+  // `eth_getBalance` — and it is the whole difference between "the market is
+  // empty because nobody has listed anything" and "the market is empty because
+  // no write could ever be paid for".
+  const signerAddress = (report.signer as { address?: `0x${string}` }).address;
+  if (signerAddress) {
+    try {
+      const wei: bigint = await (
+        arkivPublic as unknown as {
+          getBalance(a: { address: `0x${string}` }): Promise<bigint>;
+        }
+      ).getBalance({ address: signerAddress });
+      (report.checks as any).funding = {
+        ok: wei > 0n,
+        address: signerAddress,
+        glm: (Number(wei) / 1e18).toFixed(6),
+        note:
+          wei > 0n
+            ? "Funded, so writes can be paid for. A create costs roughly 1.2e5 gas."
+            : "ZERO BALANCE. Reads work and every write will fail. Fund this address with GLM at hub.arkiv.network.",
+      };
+    } catch (e: any) {
+      (report.checks as any).funding = {
+        ok: false,
+        address: signerAddress,
+        error: e?.message ?? String(e),
+      };
+    }
+  }
+
+  // 3. Would the engine accept every attribute name this build writes?
+  //
+  // A REGRESSION GUARD, and it earns its place. A camelCase attribute name
+  // passes `tsc`, passes the SDK's own `isValidAttributeName`, and is then
+  // refused by the engine's `Ident32` — see friction.md item 1. The symptom is
+  // not an error anywhere a user looks: writes fail while reads keep working,
+  // so the market simply stays empty and it reads as a funding problem.
+  //
+  // Worse, the failure can be HALF-deployed. Attribute names live in schema.ts
+  // and query predicates live in bids.ts / listings.ts, so a build that has one
+  // file updated and not the other writes snake_case and queries camelCase.
+  // Every write then succeeds, every read returns nothing, and no error is
+  // raised on either side. That state cost a debugging round to identify, so it
+  // is now visible from this endpoint instead of being invisible.
+  //
+  // Runs entirely locally: no network, no writes.
+  try {
+    const NAME_OK = /^[a-z][a-z0-9._-]*$/;
+    const A = `0x${"1".repeat(40)}` as `0x${string}`;
+    const B = `0x${"1".repeat(64)}` as `0x${string}`;
+    const names = [
+      ...Object.keys(
+        listingAttributes({
+          invoiceId: 1n, issuer: A, debtor: A, sector: "logistics",
+          faceValue: "1.00", dueDate: 1n, ratingBand: 1, teaserRef: "x",
+          docCommit: B, claimContract: A, ensName: "x", sold: false,
+        }),
+      ),
+      ...Object.keys(
+        bidAttributes({
+          invoiceId: 1n, financier: A, discountBps: 1, offerPrice: "1.00",
+          sector: "logistics", ensName: "x", ttlSeconds: 2,
+        }),
+      ),
+      ...Object.keys(handoverAttributes({ invoiceId: 1n, recipient: A })),
+    ];
+    const rejected = [...new Set(names)].filter((n) => !NAME_OK.test(n));
+    (report.checks as any).attributeNames = {
+      ok: rejected.length === 0,
+      checked: new Set(names).size,
+      rejected,
+      note:
+        rejected.length === 0
+          ? "Every attribute name this build writes is lowercase, so Ident32 will accept it."
+          : `These names will be REJECTED by the engine on every write: ${rejected.join(", ")}. Rename them to snake_case; see friction.md item 1.`,
+    };
+  } catch (e: any) {
+    (report.checks as any).attributeNames = { ok: false, error: e?.message ?? String(e) };
+  }
+
+  // 4. Does a real, project-scoped query return? Counts our own rows only.
   try {
     const page = await arkivPublic
       .select({ key: true, attributes: true })
