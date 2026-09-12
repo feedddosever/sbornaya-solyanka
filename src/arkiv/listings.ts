@@ -59,10 +59,10 @@ export async function discover(f: DiscoveryFilter) {
   ];
 
   if (f.sector) clauses.push(eq("sector", str(f.sector)));
-  if (f.minFaceValue) clauses.push(gte("faceValue", dec(f.minFaceValue)));
-  if (f.maxFaceValue) clauses.push(lte("faceValue", dec(f.maxFaceValue)));
-  if (f.dueBefore) clauses.push(lte("dueDate", u64(f.dueBefore)));
-  if (f.maxRatingBand) clauses.push(lte("ratingBand", i32(f.maxRatingBand)));
+  if (f.minFaceValue) clauses.push(gte("face_value", dec(f.minFaceValue)));
+  if (f.maxFaceValue) clauses.push(lte("face_value", dec(f.maxFaceValue)));
+  if (f.dueBefore) clauses.push(lte("due_date", u64(f.dueBefore)));
+  if (f.maxRatingBand) clauses.push(lte("rating_band", i32(f.maxRatingBand)));
 
   // Arkiv throws InvalidPredicateError on a filter-less query, so the two
   // base clauses above are load-bearing, not decoration.
@@ -80,7 +80,7 @@ export async function listingFor(invoiceId: bigint) {
   const page = await arkivPublic
     .select({ key: true, attributes: true, payload: true })
     .where(eq(PROJECT.key, str(PROJECT.value)),
-    eq("kind", str(KIND.LISTING)), eq("invoiceId", u256(invoiceId)))
+    eq("kind", str(KIND.LISTING)), eq("invoice_id", u256(invoiceId)))
     .limit(1)
     .fetch();
   return page.entities[0] ?? null;
