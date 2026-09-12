@@ -38,16 +38,16 @@ export async function GET(req: NextRequest) {
         const a = e.attributes ?? {};
         return {
           entityKey: e.key,
-          invoiceId: asBigInt(a.invoiceId).toString(),
+          invoiceId: asBigInt(a.invoice_id).toString(),
           issuer: asAddress(a.issuer),
           debtor: asAddress(a.debtor),
           sector: asString(a.sector),
-          faceValue: asDecimalString(a.faceValue),
-          dueDate: asNumber(a.dueDate),
-          ratingBand: asNumber(a.ratingBand),
-          teaserRef: asString(a.teaserRef),
-          docCommit: asString(a.docCommit),
-          ensName: asString(a.ensName),
+          faceValue: asDecimalString(a.face_value),
+          dueDate: asNumber(a.due_date),
+          ratingBand: asNumber(a.rating_band),
+          teaserRef: asString(a.teaser_ref),
+          docCommit: asString(a.doc_commit),
+          ensName: asString(a.ens_name),
           sold: asBool(a.sold),
           expiresAtBlock: meta(e).expiresAt.toString(),
         };
