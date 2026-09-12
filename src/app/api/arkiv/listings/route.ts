@@ -60,8 +60,16 @@ export async function GET(req: NextRequest) {
 /** POST /api/arkiv/listings — publish the queryable shadow of an on-chain claim. */
 export async function POST(req: NextRequest) {
   const b = await req.json();
-  const pk = process.env.ARKIV_ISSUER_PK as `0x${string}`;
-  if (!pk) return NextResponse.json({ error: "ARKIV_ISSUER_PK not set" }, { status: 500 });
+  // One funded Tiramisu key is enough for the whole app.
+  const pk = (process.env.ARKIV_ISSUER_PK || process.env.ARKIV_FIN1_PK) as
+    | `0x${string}`
+    | undefined;
+  if (!pk) {
+    return NextResponse.json(
+      { error: "No Arkiv signing key configured. Set ARKIV_ISSUER_PK or ARKIV_FIN1_PK." },
+      { status: 500 },
+    );
+  }
 
   try {
     const { entityKey, txHash } = await publishListing(pk, {
