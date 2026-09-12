@@ -17,6 +17,7 @@
  *   - no sort, no count; a zero-filter query throws InvalidPredicateError
  */
 import { addr, bool, bytes32, dec, i32, str, u256, u64 } from "@arkiv-network/sdk/attr";
+import { PROJECT } from "./project";
 
 /** Entity kinds. `kind` partitions the namespace so every query has a cheap
  *  first clause and we never rely on a filter-less scan. */
@@ -47,6 +48,8 @@ export interface ListingInput {
 
 export function listingAttributes(l: ListingInput) {
   return {
+    // Best practice #1: on EVERY entity, or other teams' rows leak in.
+    [PROJECT.key]: str(PROJECT.value),
     kind: str(KIND.LISTING),
     invoiceId: u256(l.invoiceId),
     issuer: addr(l.issuer),
@@ -80,6 +83,7 @@ export interface BidInput {
 
 export function bidAttributes(b: BidInput) {
   return {
+    [PROJECT.key]: str(PROJECT.value),
     kind: str(KIND.BID),
     invoiceId: u256(b.invoiceId),
     financier: addr(b.financier),
@@ -103,6 +107,7 @@ export interface HandoverInput {
 
 export function handoverAttributes(h: HandoverInput) {
   return {
+    [PROJECT.key]: str(PROJECT.value),
     kind: str(KIND.HANDOVER),
     invoiceId: u256(h.invoiceId),
     recipient: addr(h.recipient),
