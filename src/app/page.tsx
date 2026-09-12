@@ -96,9 +96,9 @@ export default function Market() {
     `kind        =  str('listing')`,
     `sold        =  bool(false)`,
     sector && `sector      =  str('${sector}')`,
-    minFaceValue && `faceValue   >= dec('${minFaceValue}')`,
-    dueWithinDays && `dueDate     <= u64(now + ${dueWithinDays}d)`,
-    maxRatingBand && `ratingBand  <= i32(${maxRatingBand})`,
+    minFaceValue && `face_value  >= dec('${minFaceValue}')`,
+    dueWithinDays && `due_date    <= u64(now + ${dueWithinDays}d)`,
+    maxRatingBand && `rating_band <= i32(${maxRatingBand})`,
   ]
     .filter(Boolean)
     .join("\n");
