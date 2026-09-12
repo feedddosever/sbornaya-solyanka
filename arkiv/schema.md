@@ -26,6 +26,43 @@ trade are real:
 So the test for each field was simply: *would a financier ever put this in a
 search box?* If yes, it is a typed attribute. If no, it goes in the payload.
 
+## The project attribute, before anything else
+
+Arkiv's best-practices guide opens with a requirement, not a suggestion:
+
+> All entities in Arkiv are public and stored in a shared database. Every
+> project **must** define a unique project attribute and include it on every
+> entity. Without a project attribute, your queries can return data from other
+> projects, and other projects can see yours.
+
+Every Factor entity therefore carries:
+
+```
+project = str('factor-invoice-market-ethrome-2026')
+```
+
+and **every** query leads with `eq(PROJECT.key, str(PROJECT.value))`. This is
+not hygiene theatre — forty builders are writing to the same Tiramisu testnet
+this weekend, and a book filtered only on `kind = str('bid')` would happily
+fill with another team's rows. The value is deliberately long: `factor` alone
+is a common word and a plausible name for somebody else's project.
+
+Defined once, in `src/arkiv/project.ts`, and imported everywhere. It is the
+first clause of the predicate rather than an afterthought.
+
+## Compliance with Arkiv's published best practices
+
+| # | Practice | Factor |
+|---|---|---|
+| 1 | Always use a project attribute | `src/arkiv/project.ts`, on every entity and every query |
+| 2 | Separate read and write clients | reads via `createPublicClient`; writes only in API routes with server-held keys |
+| 3 | Design attributes for queryability | every filterable field is a typed attribute; signatures stay in payload |
+| 6 | Right-size expiration | bids 60s, listings maturity + 7d grace, handovers 10m |
+| 7 | Never expose private keys | signing keys are server-side only, never `NEXT_PUBLIC_*` |
+| 9 | Use numeric types for numeric data | `dec` for money, `u64` for timestamps, `i32` for bands |
+| 10 | Model related data with shared attributes | `invoiceId` links bid → listing → the Fuji token id |
+| 11 | Understand `$owner` vs `$creator` | each financier signs their own bids, so `ownedBy()` is meaningful |
+
 ## Entity kinds
 
 `kind` is the first clause of every query. That is deliberate: it partitions the
@@ -98,18 +135,20 @@ the capability is sealed to exactly one key.
 
 ## The queries that justify the shape
 
-**Issuer, four clauses across four types** (`src/arkiv/bids.ts`):
+**Issuer, five clauses across four types** (`src/arkiv/bids.ts`):
 
 ```
+project     =  str('factor-invoice-market-ethrome-2026')
 kind        =  str('bid')
 invoiceId   =  u256(id)
 discountBps <= i32(maxBps)            range
 $expiresAt  >  u64(currentBlock)      system attribute, range
 ```
 
-**Financier, five clauses across five types** (`src/arkiv/listings.ts`):
+**Financier, seven clauses across five types** (`src/arkiv/listings.ts`):
 
 ```
+project     =  str('factor-invoice-market-ethrome-2026')
 kind        =  str('listing')
 sold        =  bool(false)
 sector      =  str('logistics')
