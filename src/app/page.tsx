@@ -16,7 +16,7 @@
  *     Note it is `entity.expiresAt` (a top-level property), even though you
  *     FILTER on `$expiresAt` in the query. See src/arkiv/entity.ts.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { watchWithResync, type StreamStatus } from "@/arkiv/watch";
 import {
   acceptBid,
@@ -170,17 +170,32 @@ export default function Market() {
    * the truth". That split is deliberate: a replay would require `fromBlock`,
    * which forces viem back onto the polling path, so a dropped connection
    * resyncs with a query instead and the subscription stays a subscription.
+   *
+   * SUBSCRIBED ON MOUNT, ALWAYS. `watchEntityEvents` is a global entity
+   * stream, not a per-listing one, so gating it on `listings.length` was a
+   * bug: an empty market never opened the socket and the indicator sat on
+   * "connecting" forever, which reads as "the websocket does not work". It
+   * also resubscribed on every listing change, churning the connection.
+   *
+   * The resync callback goes through a ref so the socket is opened exactly
+   * once for the page's lifetime while still calling the freshest query.
    */
+  const refreshRef = useRef(refreshBids);
   useEffect(() => {
-    if (!listings.length) return;
+    refreshRef.current = refreshBids;
+  }, [refreshBids]);
 
-    void refreshBids();
-
-    const handle = watchWithResync(refreshBids, {
+  useEffect(() => {
+    const handle = watchWithResync(() => refreshRef.current(), {
       onStatus: setStreamStatus,
     });
-
     return () => handle.stop();
+  }, []);
+
+  /** Initial read, and a re-read whenever the filter changes the listing set. */
+  useEffect(() => {
+    if (!listings.length) return;
+    void refreshBids();
   }, [listings, refreshBids]);
 
   /**
