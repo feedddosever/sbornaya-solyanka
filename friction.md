@@ -24,7 +24,72 @@ instead of a dead end.
 
 ## What got in the way
 
-### 1. The Live Events example builds exactly the thing Mission 03 disqualifies
+### 1. A name the SDK validates is rejected by the node, with a self-contradictory error
+
+**Severity: highest in this list — it is a hard blocker, and the error message
+points away from the cause.**
+
+Writing a bid failed with:
+
+```
+Transaction failed: an attribute name holds "B" (0x42) at byte 8, which is
+outside the name charset ("A"-"Z", "a"-"z", "0"-"9", ".", "-" and "_",
+with a letter first)
+```
+
+Byte 8 of `discountBps` is the capital `B`. **The message lists `"A"-"Z"` as
+part of the permitted charset and then rejects a character from it.** Read
+literally, it says the name is invalid because it contains a valid character.
+
+The client agrees with the message, not with the node. From the published
+bundle, `dist/attr-*.js`:
+
+```js
+NAME_RE = /^[A-Za-z][A-Za-z0-9._-]*$/
+```
+
+So `discountBps` passes `isValidAttributeName()` and `validateAttributeName()`
+locally, encodes, is signed, is submitted — and then the node refuses it. The
+SDK's exported validator does not agree with the chain it validates for, which
+makes it worse than no validator: it actively gives you the wrong answer.
+
+**What it cost.** Eleven of Factor's twenty attribute names were camelCase.
+Every write failed, the market stayed empty, and the visible symptom was
+"listings: 0" — which reads as a funding problem or a query problem, not a
+naming one. Queries kept working the whole time, because a query over a name
+nothing could ever write simply matches nothing. Nothing before an actual
+signed write surfaces this: not `tsc`, not the SDK's own validator, not a read.
+
+**Repro.** One entity, one attribute:
+
+```ts
+await arkivWallet(pk).createEntity({
+  attributes: { project: str("x"), camelCase: str("y") },
+  expires: ExpirationTime.fromSeconds(60),
+});
+// isValidAttributeName("camelCase") === true
+// node: rejects at the byte index of the capital C
+```
+
+**Fixes, in order of value.**
+
+1. Make the two rules agree. Either the node accepts `[A-Za-z]` as both it and
+   `NAME_RE` claim, or `NAME_RE` becomes `/^[a-z][a-z0-9._-]*$/` and the error
+   message stops listing `"A"-"Z"`.
+2. Until then, say so in the docs. Every example in the best-practices guide is
+   snake_case (`entity_type`, `proposal_key`), so the working convention is
+   already there implicitly — one sentence would make it explicit. I did notice
+   the pattern afterwards, which is exactly when noticing is useless.
+3. If the charset really is lowercase-only, the message should name the
+   attribute, not just a byte offset. `attribute "discountBps": uppercase not
+   permitted after position 0` would have ended this in ten seconds instead of
+   a debugging round.
+
+Factor now uses snake_case throughout (`discount_bps`, `invoice_id`,
+`face_value`), and the reason is recorded at the top of `src/arkiv/schema.ts`
+so nobody on the project reintroduces a camelCase name later.
+
+### 2. The Live Events example builds exactly the thing Mission 03 disqualifies
 
 **Severity: high — this one costs you bounty entries.**
 
@@ -49,7 +114,7 @@ a real subscription."* Also state explicitly what `fromBlock` does to the
 transport choice — the interaction between "replay history" and "stay on a
 socket" is the actual hard part of Mission 03, and it is currently folklore.
 
-### 2. `fromBlock` and socket delivery are mutually exclusive, and that has no guidance
+### 3. `fromBlock` and socket delivery are mutually exclusive, and that has no guidance
 
 Recovering from a dropped connection wants a replay; a replay sets `fromBlock`;
 `fromBlock` forces polling. So the obvious reconnection strategy silently
@@ -62,7 +127,7 @@ the query carries "here is the truth". **Suggested fix:** document that pattern,
 or say plainly that `watchEntityEvents` is at-most-once and callers must
 reconcile.
 
-### 3. No sort and no aggregate, which caps what the query layer can be
+### 4. No sort and no aggregate, which caps what the query layer can be
 
 **Severity: medium — this is the thing stopping Factor from being real.**
 
@@ -78,7 +143,7 @@ most natural question in the entire domain — as a query.
 **Suggested fix:** `orderBy` on an indexed attribute would unlock a large class
 of apps. A `count`-only query mode would be a strong second.
 
-### 4. `ne` excludes entities missing the attribute, which is a silent correctness trap
+### 5. `ne` excludes entities missing the attribute, which is a silent correctness trap
 
 `ne("sold", bool(true))` matches only entities where `sold` is *set* to
 something else. Listings created before I added the attribute silently vanished
@@ -93,7 +158,7 @@ observe it is not returned.
 callout box on the Querying Data page next to `ne` itself. It cost me ~40
 minutes precisely because the query looked obviously right.
 
-### 5. `--` in an attribute name writes fine, then corrupts queries
+### 6. `--` in an attribute name writes fine, then corrupts queries
 
 I named an attribute `rating--band`. The write succeeded. Every later query
 filtering on it returned wrong results, because `--` opens a comment in the
@@ -108,7 +173,7 @@ bug rather than a naming one.
 reason ("`--` begins a comment in the query language"). Failing fast at the
 write is strictly better than a silent read-time corruption.
 
-### 6. Duration helpers read as wall-clock but aren't
+### 7. Duration helpers read as wall-clock but aren't
 
 `ExpirationTime.fromSeconds(60)` resolves to 30 blocks, which is 60 seconds only
 if blocks are exactly 2s — and the docs are careful to say block production is
@@ -123,7 +188,7 @@ them return the resolved target block so the drift is visible at the call site.
 Factor now reads `$expiresAt` back and renders countdowns from block height
 rather than from what it requested.
 
-### 7. `fromSeconds` rejects odd numbers without saying why
+### 8. `fromSeconds` rejects odd numbers without saying why
 
 `ExpirationTime.fromSeconds(45)` throws. The constraint (a positive multiple of
 the 2-second block time) is reasonable, but it leaks block time into an API
