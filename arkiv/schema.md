@@ -61,7 +61,7 @@ first clause of the predicate rather than an afterthought.
 | 7 | Never expose private keys | signing keys are server-side only, never `NEXT_PUBLIC_*` |
 | 9 | Use numeric types for numeric data | `dec` for money, `u64` for timestamps, `i32` for bands |
 | 10 | Model related data with shared attributes | `invoiceId` links bid → listing → the Fuji token id |
-| 11 | Understand `$owner` vs `$creator` | each financier signs their own bids, so `ownedBy()` is meaningful |
+| 11 | Understand `$owner` vs `$creator` | **deliberately not relied on** — signing keys are server-side, so `$owner` is Factor's key, not the financier's. Whose bid it is comes from the `financier` attribute. See below. |
 
 ## Entity kinds
 
@@ -179,9 +179,40 @@ builder rather than a decorative wrapper over a fetch-by-id.
   is approximately a minute. The UI reads `$expiresAt` back rather than counting
   down from what it asked for.
 
-## Ownership model
+## Ownership model, stated honestly
 
-Listings and handovers are signed by the issuer; each bid is signed by its own
-financier. That is not incidental — an Arkiv entity is owned by the wallet that
-signed it, so using separate signers is what makes `$owner` / `ownedBy()` a
-meaningful filter ("my live bids") instead of a constant.
+Arkiv's best practice #11 asks you to understand `$owner` versus `$creator`.
+Here is the honest answer for Factor, which is not the flattering one.
+
+`$owner` is the wallet that **signed** the entity. Factor's signing keys live
+server-side, because best practice #7 says never expose private keys to a
+browser. So `$owner` is *Factor's* key — never the financier's wallet. That is
+true no matter how many keys the deployment holds: running three keys instead
+of one would only hide the fact behind a plausible-looking `ownedBy()` call.
+
+So the question "whose bid is this?" is answered by the **`financier`
+attribute**, which is precisely why it is an attribute and not inferred from
+ownership. `ownedBy()` answers a different question — "which of my server keys
+wrote this row" — and Factor does not pretend otherwise. Both queries exist
+side by side in `src/arkiv/bids.ts` (`myLiveBids` and `bidsSignedBy`), and the
+gap between them *is* the trade-off.
+
+**Factor is therefore a custodial index writer.** One funded Tiramisu key
+writes every row. The consequence is real: a financier cannot prove to a third
+party that a bid was theirs, because they never signed it.
+
+Two ways to close that, neither done here:
+
+1. **The financier signs.** Their browser holds an Arkiv key and creates the
+   bid itself. `$owner` then genuinely is them, `ownedBy()` becomes meaningful,
+   and Factor stops being trusted for authorship. This is the version Arkiv's
+   ownership model is built for.
+2. **`changeOwnership` after the write.** Factor creates the bid and transfers
+   ownership to the financier's address, which needs their address but not
+   their key. Costs a second transaction per bid, and the app is still trusted
+   for the instant in between.
+
+Option 1 is the right answer. It was not built because the demo signs on behalf
+of two stand-in financiers, and handing a browser a funded key for a hackathon
+demo would have been the wrong trade — but the limitation is architectural, not
+cosmetic, and it belongs in this document rather than in a footnote.
