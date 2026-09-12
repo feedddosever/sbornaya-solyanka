@@ -18,7 +18,7 @@ Attributes are indexed and queryable; payload is not. There are only 32
 attribute slots per entity and 128 KB of payload, so both directions of that
 trade are real:
 
-- put `faceValue` in the payload and every search becomes a client-side scan
+- put `face_value` in the payload and every search becomes a client-side scan
   over every listing in the system;
 - put a signature blob in attributes and you burn one of 32 slots on something
   nobody will ever filter by.
@@ -60,7 +60,7 @@ first clause of the predicate rather than an afterthought.
 | 6 | Right-size expiration | bids 60s, listings maturity + 7d grace, handovers 10m |
 | 7 | Never expose private keys | signing keys are server-side only, never `NEXT_PUBLIC_*` |
 | 9 | Use numeric types for numeric data | `dec` for money, `u64` for timestamps, `i32` for bands |
-| 10 | Model related data with shared attributes | `invoiceId` links bid → listing → the Fuji token id |
+| 10 | Model related data with shared attributes | `invoice_id` links bid → listing → the Fuji token id |
 | 11 | Understand `$owner` vs `$creator` | **deliberately not relied on** — signing keys are server-side, so `$owner` is Factor's key, not the financier's. Whose bid it is comes from the `financier` attribute. See below. |
 
 ## Entity kinds
@@ -75,18 +75,18 @@ no "match all" to fall back on.
 | attribute | type | queryable because |
 |---|---|---|
 | `kind` | `str` | partition |
-| `invoiceId` | `u256` | joins to the Fuji ERC-721 token id |
+| `invoice_id` | `u256` | joins to the Fuji ERC-721 token id |
 | `issuer` | `addr` | "everything Acme has listed" |
 | `debtor` | `addr` | concentration risk — "am I overexposed to this debtor?" |
 | `sector` | `str` | financiers have sector mandates |
-| `faceValue` | `dec` | **range filter** — the reason this is `dec`, not `str` |
-| `dueDate` | `u64` | **range filter** — horizon matching |
-| `ratingBand` | `i32` | **range filter** — 1 (best) to 5 |
-| `teaserRef` | `str` | Swarm ref of the *public* redacted summary |
-| `docCommit` | `bytes32` | commitment to the encrypted full document |
-| `claimContract` | `addr` | which deployment the asset lives in |
-| `chainId` | `i32` | 43113 — makes the cross-chain link explicit |
-| `ensName` | `str` | `acme.factor.eth` |
+| `face_value` | `dec` | **range filter** — the reason this is `dec`, not `str` |
+| `due_date` | `u64` | **range filter** — horizon matching |
+| `rating_band` | `i32` | **range filter** — 1 (best) to 5 |
+| `teaser_ref` | `str` | Swarm ref of the *public* redacted summary |
+| `doc_commit` | `bytes32` | commitment to the encrypted full document |
+| `claim_contract` | `addr` | which deployment the asset lives in |
+| `chain_id` | `i32` | 43113 — makes the cross-chain link explicit |
+| `ens_name` | `str` | `acme.factor.eth` |
 | `sold` | `bool` | lifecycle |
 
 Payload: a human description and the teaser reference. Nothing here is
@@ -100,12 +100,12 @@ invoice nobody financed stops cluttering the market without a cleanup job.
 | attribute | type | queryable because |
 |---|---|---|
 | `kind` | `str` | partition |
-| `invoiceId` | `u256` | which claim this bids on |
+| `invoice_id` | `u256` | which claim this bids on |
 | `financier` | `addr` | who is offering |
-| `discountBps` | `i32` | **range filter** — the issuer's acceptance threshold |
-| `offerPrice` | `dec` | what they will actually pay |
+| `discount_bps` | `i32` | **range filter** — the issuer's acceptance threshold |
+| `offer_price` | `dec` | what they will actually pay |
 | `sector` | `str` | denormalised so sector queries need no join |
-| `ensName` | `str` | resolves to a payout address and a sealing key |
+| `ens_name` | `str` | resolves to a payout address and a sealing key |
 
 Payload: the signed quote blob and a posting timestamp.
 
@@ -120,7 +120,7 @@ definition of a live quote.
 | attribute | type |
 |---|---|
 | `kind` | `str` |
-| `invoiceId` | `u256` |
+| `invoice_id` | `u256` |
 | `recipient` | `addr` |
 
 Payload: the ECIES ciphertext of the encrypted-document reference, sealed to the
@@ -140,8 +140,8 @@ the capability is sealed to exactly one key.
 ```
 project     =  str('factor-invoice-market-ethrome-2026')
 kind        =  str('bid')
-invoiceId   =  u256(id)
-discountBps <= i32(maxBps)            range
+invoice_id   =  u256(id)
+discount_bps <= i32(maxBps)            range
 $expiresAt  >  u64(currentBlock)      system attribute, range
 ```
 
@@ -152,9 +152,9 @@ project     =  str('factor-invoice-market-ethrome-2026')
 kind        =  str('listing')
 sold        =  bool(false)
 sector      =  str('logistics')
-faceValue   >= dec('5000')            range
-dueDate     <= u64(horizon)           range
-ratingBand  <= i32(3)                 range
+face_value  >= dec('5000')            range
+due_date    <= u64(horizon)           range
+rating_band <= i32(3)                 range
 ```
 
 Every clause maps to a control in the UI, so the interface *is* the query
@@ -173,7 +173,10 @@ builder rather than a decorative wrapper over a fetch-by-id.
   entities where `sold` was never set. Use `not(eq(...))` or `not(exists(...))`.
 - **Attribute names cannot contain `--`.** It opens a comment in the query
   language, so such a name writes successfully and then silently corrupts every
-  query that filters on it. We renamed `rating--band` to `ratingBand` early.
+  query that filters on it. We renamed `rating--band` to `ratingBand` early — and then had to rename it
+  again to `rating_band`, because the node rejects uppercase after the first
+  character even though the SDK's own `NAME_RE` permits it. Two naming rules,
+  neither of them in the docs. See friction.md item 1.
 - **Durations drift.** `BLOCK_TIME` is a nominal 2 seconds and the docs are
   explicit that block production is not a clock, so a `fromSeconds(60)` lifetime
   is approximately a minute. The UI reads `$expiresAt` back rather than counting
