@@ -6,7 +6,7 @@
  * anybody deleting it and without a reaper job. Expiry is the feature.
  */
 import { eq, gt, lte, not, exists } from "@arkiv-network/sdk/query";
-import { i32, str, u256, u64 } from "@arkiv-network/sdk/attr";
+import { addr, i32, str, u256, u64 } from "@arkiv-network/sdk/attr";
 import { ExpirationTime, jsonToPayload } from "@arkiv-network/sdk/utils";
 import { arkivPublic, arkivWallet, currentBlock, secondsUntil } from "./client";
 import { bidAttributes, KIND, type BidInput } from "./schema";
@@ -107,15 +107,62 @@ export async function bestBid(invoiceId: bigint, maxDiscountBps = 10_000) {
   return bids[0] ?? null;
 }
 
-/** Every live bid this financier currently has standing, across all invoices.
- *  Uses `ownedBy`, which is sugar for eq("$owner", addr(...)). */
+/**
+ * Every live bid a financier currently has standing, across all invoices.
+ *
+ * ── WHY THIS FILTERS ON AN ATTRIBUTE AND NOT ON `$owner` ─────────────────
+ *
+ * `$owner` is the wallet that SIGNED the entity. In Factor the signing keys
+ * live server-side (best practice #7: never expose private keys), so `$owner`
+ * is Factor's own key — not the financier's wallet. That is true however many
+ * keys the deployment holds: one key makes it obvious, three keys merely hide
+ * it behind a plausible-looking `ownedBy()` call.
+ *
+ * So the honest identifier for "whose bid is this" is the `financier`
+ * attribute, which is exactly why it is an attribute. `ownedBy()` would answer
+ * a different question: "which of my server keys wrote this row".
+ *
+ * Factor is therefore a CUSTODIAL index writer, and that is a real trade-off
+ * worth naming rather than dressing up. See `bidsSignedBy` below for the
+ * non-custodial version and what it would take.
+ */
 export async function myLiveBids(financier: `0x${string}`) {
   const block = await currentBlock();
   const page = await arkivPublic
     .select({ key: true, attributes: true })
-    .where(eq(PROJECT.key, str(PROJECT.value)),
-      eq("kind", str(KIND.BID)), gt("$expiresAt", u64(block)))
-    .ownedBy(financier)
+    .where(
+      eq(PROJECT.key, str(PROJECT.value)),
+      eq("kind", str(KIND.BID)),
+      eq("financier", addr(financier)),
+      gt("$expiresAt", u64(block)),
+    )
+    .limit(100)
+    .fetch();
+  return page.entities;
+}
+
+/**
+ * The non-custodial question: which bids were signed by this wallet?
+ *
+ * Meaningful only when the financier signs their own entity — i.e. the browser
+ * holds their Arkiv key, or the app calls `changeOwnership` after creating the
+ * bid so `$owner` becomes them. Factor does neither today: one funded key
+ * writes every row.
+ *
+ * Kept because it is the shape the answer should have, and because the gap
+ * between these two functions IS the trade-off. `ownedBy()` is sugar for
+ * `eq("$owner", addr(...))`.
+ */
+export async function bidsSignedBy(signer: `0x${string}`) {
+  const block = await currentBlock();
+  const page = await arkivPublic
+    .select({ key: true, attributes: true })
+    .where(
+      eq(PROJECT.key, str(PROJECT.value)),
+      eq("kind", str(KIND.BID)),
+      gt("$expiresAt", u64(block)),
+    )
+    .ownedBy(signer)
     .limit(100)
     .fetch();
   return page.entities;
