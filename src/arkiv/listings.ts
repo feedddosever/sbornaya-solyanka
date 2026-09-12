@@ -11,6 +11,7 @@ import { eq, gte, lte } from "@arkiv-network/sdk/query";
 import { ExpirationTime, jsonToPayload } from "@arkiv-network/sdk/utils";
 import { arkivPublic, arkivWallet } from "./client";
 import { listingAttributes, KIND, type ListingInput, type Sector } from "./schema";
+import { PROJECT } from "./project";
 
 /** Publish a listing. Lifetime runs to maturity plus a grace window, so the
  *  index self-prunes: an invoice nobody financed stops cluttering the market. */
@@ -50,6 +51,9 @@ export interface DiscoveryFilter {
  */
 export async function discover(f: DiscoveryFilter) {
   const clauses: any[] = [
+    // Best practice #1. Without this the market fills with other teams'
+    // entities - forty builders share this testnet.
+    eq(PROJECT.key, str(PROJECT.value)),
     eq("kind", str(KIND.LISTING)),
     eq("sold", bool(false)),
   ];
@@ -75,7 +79,8 @@ export async function discover(f: DiscoveryFilter) {
 export async function listingFor(invoiceId: bigint) {
   const page = await arkivPublic
     .select({ key: true, attributes: true, payload: true })
-    .where(eq("kind", str(KIND.LISTING)), eq("invoiceId", u256(invoiceId)))
+    .where(eq(PROJECT.key, str(PROJECT.value)),
+    eq("kind", str(KIND.LISTING)), eq("invoiceId", u256(invoiceId)))
     .limit(1)
     .fetch();
   return page.entities[0] ?? null;
@@ -85,7 +90,8 @@ export async function listingFor(invoiceId: bigint) {
 export async function listingsByIssuer(issuer: `0x${string}`) {
   const page = await arkivPublic
     .select({ key: true, attributes: true })
-    .where(eq("kind", str(KIND.LISTING)), eq("issuer", addr(issuer)))
+    .where(eq(PROJECT.key, str(PROJECT.value)),
+    eq("kind", str(KIND.LISTING)), eq("issuer", addr(issuer)))
     .limit(100)
     .fetch();
   return page.entities;
@@ -96,7 +102,8 @@ export async function allOpenListings() {
   const out: any[] = [];
   for await (const entity of arkivPublic
     .select({ key: true, attributes: true })
-    .where(eq("kind", str(KIND.LISTING)), eq("sold", bool(false)))) {
+    .where(eq(PROJECT.key, str(PROJECT.value)),
+    eq("kind", str(KIND.LISTING)), eq("sold", bool(false)))) {
     out.push(entity);
   }
   return out;
