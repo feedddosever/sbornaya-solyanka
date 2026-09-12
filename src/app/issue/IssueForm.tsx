@@ -46,7 +46,7 @@ export default function IssueForm() {
   // Swarm ID must be initialised before anything else — it creates the hidden
   // iframe that holds all key material.
   useEffect(() => {
-    initSwarm(setInfo).catch((e) => setErr(`Swarm ID init failed: ${e.message}`));
+    initSwarm(setInfo).catch((e) => setErr(swarmInitError(e)));
   }, []);
 
   const blocked = uploadBlockedReason(info);
@@ -257,4 +257,31 @@ function band(v: number): string {
   if (v < 25_000) return "10k-25k";
   if (v < 100_000) return "25k-100k";
   return "over 100k";
+}
+
+/**
+ * Swarm ID validates its options with zod and reports failures as a raw JSON
+ * issue array. Useful when debugging, unreadable on a demo screen, so the two
+ * failures that actually happen get a plain sentence.
+ */
+function swarmInitError(e: any): string {
+  const raw = String(e?.message ?? e);
+
+  if (/subsidisedGatewayUrl/.test(raw)) {
+    return (
+      "Swarm ID rejected the subsidised gateway setting. Leave " +
+      "NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY unset, or give it a full https:// URL — " +
+      "an empty value fails URL validation and takes down the whole init."
+    );
+  }
+  if (/Invalid message format/.test(raw)) {
+    return `Swarm ID rejected the client options: ${raw.replace(/\s+/g, " ").slice(0, 200)}`;
+  }
+  if (/timeout|timed out/i.test(raw)) {
+    return (
+      "Swarm ID did not respond in time. Its hidden iframe on swarm-id.snaha.net " +
+      "may be blocked — check for an extension or a strict tracking-protection setting."
+    );
+  }
+  return `Swarm ID init failed: ${raw.slice(0, 200)}`;
 }
