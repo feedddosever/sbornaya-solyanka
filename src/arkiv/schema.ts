@@ -24,20 +24,27 @@ import { PROJECT } from "./project";
 /**
  * ATTRIBUTE NAMES ARE snake_case, AND THAT IS NOT A STYLE CHOICE.
  *
- * The node rejects an uppercase letter anywhere after the first character:
+ * The engine's identifier type `Ident32` rejects an uppercase letter anywhere
+ * after the first character. `discountBps` reverts with
+ * `Ident32InvalidByte(8, 0x42)`, which the SDK renders as:
  *
  *   Transaction failed: an attribute name holds "B" (0x42) at byte 8, which is
  *   outside the name charset ("A"-"Z", "a"-"z", "0"-"9", ".", "-" and "_",
  *   with a letter first)
  *
- * That was `discountBps`. Note the message lists "A"-"Z" as permitted and then
- * refuses a capital B, so the real rule is narrower than both the message and
- * the documented `Ident32` grammar suggest. Found only by an actual write -
- * nothing in the type system or the docs catches it. Every example in Arkiv's
- * own best-practices guide is snake_case, which in hindsight was the hint.
+ * Note that the message lists "A"-"Z" as permitted and then refuses a capital
+ * B. That charset text is a hardcoded string in the SDK, and the SDK's exported
+ * validator agrees with it rather than with the engine:
+ * `isValidAttributeName("discountBps")` returns TRUE. So neither the type
+ * system, nor the SDK's own guard, nor the error message will stop you - only
+ * an actual write does, and the symptom you see first is an empty market.
  *
- * The TypeScript input interfaces below stay camelCase; only the on-chain
- * attribute NAMES are snake_case.
+ * Every example in Arkiv's best-practices guide is snake_case, which in
+ * hindsight was the hint. Reported as friction.md item 1.
+ *
+ * DO NOT introduce a camelCase attribute name here. The TypeScript input
+ * interfaces below stay camelCase - they never reach the wire - so only the
+ * keys returned by the *Attributes functions matter.
  */
 
 /** Entity kinds. `kind` partitions the namespace so every query has a cheap
