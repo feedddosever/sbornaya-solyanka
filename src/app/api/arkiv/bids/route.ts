@@ -8,6 +8,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { postBid, liveBidsFor } from "@/arkiv/bids";
+import { cleanKey } from "@/arkiv/client";
 import type { Sector } from "@/arkiv/schema";
 
 /** GET /api/arkiv/bids?invoiceId=1&maxDiscountBps=800 */
@@ -46,9 +47,10 @@ export async function POST(req: NextRequest) {
   // cares. See the note on myLiveBids in src/arkiv/bids.ts.
   const preferred =
     body.financierSlot === 2 ? process.env.ARKIV_FIN2_PK : process.env.ARKIV_FIN1_PK;
-  const pk = (preferred ||
-    process.env.ARKIV_FIN1_PK ||
-    process.env.ARKIV_ISSUER_PK) as `0x${string}` | undefined;
+  const pk =
+    cleanKey(preferred) ||
+    cleanKey(process.env.ARKIV_FIN1_PK) ||
+    cleanKey(process.env.ARKIV_ISSUER_PK);
 
   if (!pk) {
     return NextResponse.json(
