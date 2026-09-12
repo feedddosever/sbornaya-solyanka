@@ -17,6 +17,7 @@
  *     FILTER on `$expiresAt` in the query. See src/arkiv/entity.ts.
  */
 import { useCallback, useEffect, useState } from "react";
+import { watchWithResync, type StreamStatus } from "@/arkiv/watch";
 import {
   acceptBid,
   approveFusd,
@@ -85,9 +86,13 @@ export default function Market() {
   const [msg, setMsg] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const [busy, setBusy] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
+  const [fetchedAt, setFetchedAt] = useState(() => Date.now());
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   /** The predicate, written out exactly as the SDK will build it. */
   const queryText = [
+    `project     =  str('factor-invoice-market-ethrome-2026')`,
     `kind        =  str('listing')`,
     `sold        =  bool(false)`,
     sector && `sector      =  str('${sector}')`,
@@ -99,6 +104,10 @@ export default function Market() {
     .join("\n");
 
   const clauseCount = queryText.split("\n").length;
+
+  /** Seconds left, interpolated locally between stream updates. No network. */
+  const remaining = (bid: Bid) =>
+    Math.max(0, Math.round(bid.secondsLeft - (nowTick - fetchedAt) / 1000));
 
   const loadListings = useCallback(async () => {
     setErr(null);
@@ -132,36 +141,60 @@ export default function Market() {
     }
   }, [sector, minFaceValue, maxRatingBand, dueWithinDays]);
 
-  /** Poll the bid book. The countdown is the whole point, so keep it tight. */
-  useEffect(() => {
-    if (!listings.length) return;
-    let alive = true;
-
-    const tick = async () => {
-      const next: Record<string, Bid[]> = {};
-      await Promise.all(
-        listings.map(async (l) => {
-          try {
-            const r = await fetch(`/api/arkiv/bids?invoiceId=${l.invoiceId}`).then((x) => x.json());
-            next[l.invoiceId] = r.bids ?? [];
-          } catch {
-            next[l.invoiceId] = [];
-          }
-        }),
-      );
-      if (alive) setBids(next);
-    };
-
-    tick();
-    const id = setInterval(tick, 3000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
+  /**
+   * Read the authoritative bid state. This is a QUERY, not a poll - nothing
+   * calls it on a timer. It runs once on load and then only when the websocket
+   * says something changed.
+   */
+  const refreshBids = useCallback(async () => {
+    const next: Record<string, Bid[]> = {};
+    await Promise.all(
+      listings.map(async (l) => {
+        try {
+          const r = await fetch(`/api/arkiv/bids?invoiceId=${l.invoiceId}`).then((x) => x.json());
+          next[l.invoiceId] = r.bids ?? [];
+        } catch {
+          next[l.invoiceId] = [];
+        }
+      }),
+    );
+    setBids(next);
+    setFetchedAt(Date.now());
   }, [listings]);
 
+  /**
+   * MISSION 03. The bid book updates from an Arkiv websocket subscription -
+   * there is no `setInterval` anywhere in this file that touches the network.
+   *
+   * The stream carries "something changed"; the query above carries "here is
+   * the truth". That split is deliberate: a replay would require `fromBlock`,
+   * which forces viem back onto the polling path, so a dropped connection
+   * resyncs with a query instead and the subscription stays a subscription.
+   */
   useEffect(() => {
-    loadListings();
+    if (!listings.length) return;
+
+    void refreshBids();
+
+    const handle = watchWithResync(refreshBids, {
+      onStatus: setStreamStatus,
+    });
+
+    return () => handle.stop();
+  }, [listings, refreshBids]);
+
+  /**
+   * A local render ticker, NOT a poll. It touches no network: it only advances
+   * the clock so the countdown interpolates between stream updates, from the
+   * `expiresAt` block height the node already gave us.
+   */
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    void loadListings();
   }, [loadListings]);
 
   async function postDemoBid(l: Listing, slot: 1 | 2, discountBps: number, ttl: number) {
@@ -264,6 +297,23 @@ export default function Market() {
         quote stops existing.
       </p>
 
+      <div className="row" style={{ marginBottom: 18 }}>
+        <span className={`stream ${streamStatus}`}>
+          <i />
+          {streamStatus === "live"
+            ? "arkiv websocket · live"
+            : streamStatus === "connecting"
+              ? "arkiv websocket · connecting"
+              : streamStatus === "reconnecting"
+                ? "arkiv websocket · reconnecting"
+                : "stream stopped"}
+        </span>
+        <span className="note">
+          The book updates from the subscription, not a timer. The countdown ticks locally
+          between events.
+        </span>
+      </div>
+
       <div className="filters">
         <label>
           Sector
@@ -320,7 +370,7 @@ export default function Market() {
       ) : (
         <div className="cards">
           {listings.map((l) => {
-            const live = (bids[l.invoiceId] ?? []).filter((b) => b.secondsLeft > 0);
+            const live = (bids[l.invoiceId] ?? []).filter((b) => remaining(b) > 0);
             const oc = chain[l.invoiceId];
             return (
               <div className="card" key={l.entityKey}>
@@ -368,8 +418,8 @@ export default function Market() {
                         — {b.offerPrice} FUSD
                       </span>
                       <span className="k">{(b.discountBps / 100).toFixed(2)}%</span>
-                      <span className={`ttl ${b.secondsLeft < 15 ? "urgent" : ""}`}>
-                        {b.secondsLeft}s
+                      <span className={`ttl ${remaining(b) < 15 ? "urgent" : ""}`}>
+                        {remaining(b)}s
                       </span>
                       <button disabled={busy || oc?.matured} onClick={() => accept(l, b)}>
                         Accept
