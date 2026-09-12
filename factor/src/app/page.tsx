@@ -10,17 +10,14 @@
  *     the largest slice of the Arkiv rubric; showing the predicate is the
  *     cheapest way to earn it.
  *
- *  2. Bid countdowns are derived from the entity's own `expiresAt` block height
- *     read back from the node, never from the lifetime we requested — because
- *     Arkiv's 2-second block time is nominal and duration expiries drift.
- *     Note it is `entity.expiresAt` (a top-level property), even though you
- *     FILTER on `$expiresAt` in the query. See src/arkiv/entity.ts.
+ *  2. Bids show a live countdown derived from `$expiresAt` read back off-chain,
+ *     never from the lifetime we requested — because Arkiv's 2-second block
+ *     time is nominal and duration expiries drift.
  */
 import { useCallback, useEffect, useState } from "react";
 import {
   acceptBid,
   approveFusd,
-  connectWallet,
   explorerTx,
   readInvoice,
   settleInvoice,
@@ -54,24 +51,6 @@ interface Bid {
 
 const SECTORS = ["", "logistics", "manufacturing", "services", "retail", "construction"];
 
-/**
- * The demo financiers.
- *
- * These MUST be real, distinct, eligible addresses — not the issuer. `sell()`
- * reverts with `SelfPurchase` when buyer == holder, and the issuer IS the
- * holder immediately after `issue()`, so standing a bid in the issuer's name
- * makes the headline "accept a bid" moment fail on-chain.
- *
- * Each of these also needs a standing FUSD allowance to the claim contract,
- * because `sell()` pulls from the buyer. Run:
- *   PRIVATE_KEY=<financier key> FUSD_ADDRESS=.. CLAIM_ADDRESS=.. \
- *   forge script script/Approve.s.sol --rpc-url fuji --broadcast
- */
-const FINANCIERS: Record<1 | 2, `0x${string}` | undefined> = {
-  1: process.env.NEXT_PUBLIC_FIN1_ADDR as `0x${string}` | undefined,
-  2: process.env.NEXT_PUBLIC_FIN2_ADDR as `0x${string}` | undefined,
-};
-
 export default function Market() {
   const [sector, setSector] = useState("");
   const [minFaceValue, setMin] = useState("");
@@ -83,7 +62,6 @@ export default function Market() {
   const [chain, setChain] = useState<Record<string, OnChainInvoice>>({});
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const [busy, setBusy] = useState(false);
 
   /** The predicate, written out exactly as the SDK will build it. */
@@ -167,24 +145,7 @@ export default function Market() {
   async function postDemoBid(l: Listing, slot: 1 | 2, discountBps: number, ttl: number) {
     setBusy(true);
     setErr(null);
-    setTxHash(null);
     try {
-      const financier = FINANCIERS[slot];
-      if (!financier) {
-        throw new Error(
-          `NEXT_PUBLIC_FIN${slot}_ADDR is not set. A bid needs a real, eligible ` +
-            `financier address — the issuer cannot buy their own claim (sell() ` +
-            `reverts with SelfPurchase).`,
-        );
-      }
-      const holder = chain[l.invoiceId]?.holder;
-      if (holder && holder.toLowerCase() === financier.toLowerCase()) {
-        throw new Error(
-          `Financier ${slot} is the current holder of this claim, so accepting ` +
-            `would revert with SelfPurchase. Use the other financier.`,
-        );
-      }
-
       const price = (Number(l.faceValue) * (1 - discountBps / 10_000)).toFixed(2);
       const r = await fetch("/api/arkiv/bids", {
         method: "POST",
@@ -192,7 +153,7 @@ export default function Market() {
         body: JSON.stringify({
           invoiceId: l.invoiceId,
           financierSlot: slot,
-          financier,
+          financier: slot === 2 ? l.debtor : l.issuer, // demo stand-ins
           discountBps,
           offerPrice: price,
           sector: l.sector,
@@ -214,7 +175,9 @@ export default function Market() {
     setBusy(true);
     setErr(null);
     try {
-      const account = await connectWallet();
+      const [account] = (await (window as any).ethereum.request({
+        method: "eth_requestAccounts",
+      })) as `0x${string}`[];
 
       const hash = await acceptBid({
         account,
@@ -223,11 +186,7 @@ export default function Market() {
         priceHuman: bid.offerPrice,
         arkivBidKey: toBytes32(bid.entityKey),
       });
-      setTxHash(hash);
-      setMsg(
-        `Sold. The transaction records Arkiv bid ${bid.entityKey.slice(0, 14)}… ` +
-          `so the fill can be reconciled against the offer that produced it.`,
-      );
+      setMsg(`Sold. The transaction records Arkiv bid ${bid.entityKey.slice(0, 14)}… — ${hash}`);
     } catch (e: any) {
       setErr(humanise(e));
     } finally {
@@ -238,16 +197,12 @@ export default function Market() {
   async function settle(l: Listing) {
     setBusy(true);
     try {
-      const account = await connectWallet();
-      // Approve the ON-CHAIN face value. The Arkiv listing is an index and
-      // can lag; the contract is the authority on what is owed.
-      const onChain = chain[l.invoiceId] ?? (await readInvoice(BigInt(l.invoiceId)));
-      await approveFusd(account, onChain.faceValueHuman);
+      const [account] = (await (window as any).ethereum.request({
+        method: "eth_requestAccounts",
+      })) as `0x${string}`[];
+      await approveFusd(account, l.faceValue);
       const hash = await settleInvoice(account, BigInt(l.invoiceId));
-      setTxHash(hash);
-      setMsg(
-        `Settled — holder paid ${onChain.faceValueHuman} FUSD and the claim was burned.`,
-      );
+      setMsg(`Settled — holder paid ${l.faceValue} FUSD, claim burned. ${hash}`);
     } catch (e: any) {
       setErr(humanise(e));
     } finally {
@@ -298,19 +253,7 @@ export default function Market() {
       </p>
 
       {err && <div className="err">{err}</div>}
-      {msg && (
-        <div className="ok">
-          {msg}
-          {txHash && (
-            <>
-              {" "}
-              <a className="link" href={explorerTx(txHash)} target="_blank" rel="noreferrer">
-                View on Snowtrace →
-              </a>
-            </>
-          )}
-        </div>
-      )}
+      {msg && <div className="ok">{msg}</div>}
 
       {!listings.length ? (
         <div className="empty">

@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { discover, publishListing } from "@/arkiv/listings";
 import type { Sector } from "@/arkiv/schema";
-import {
-  asAddress,
-  asBigInt,
-  asBool,
-  asDecimalString,
-  asNumber,
-  asString,
-  meta,
-} from "@/arkiv/entity";
 
 /**
  * GET /api/arkiv/listings?sector=logistics&minFaceValue=5000&dueBefore=...&maxRatingBand=3
@@ -30,27 +21,20 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       blockNumber: page.blockNumber?.toString(),
-      // Attribute values come back TAGGED, not bare, so every field goes
-      // through an unwrapping accessor. Reading them directly yields
-      // "[object Object]" in the UI - see src/arkiv/entity.ts.
-      listings: page.entities.map((e: any) => {
-        const a = e.attributes ?? {};
-        return {
-          entityKey: e.key,
-          invoiceId: asBigInt(a.invoiceId).toString(),
-          issuer: asAddress(a.issuer),
-          debtor: asAddress(a.debtor),
-          sector: asString(a.sector),
-          faceValue: asDecimalString(a.faceValue),
-          dueDate: asNumber(a.dueDate),
-          ratingBand: asNumber(a.ratingBand),
-          teaserRef: asString(a.teaserRef),
-          docCommit: asString(a.docCommit),
-          ensName: asString(a.ensName),
-          sold: asBool(a.sold),
-          expiresAtBlock: meta(e).expiresAt.toString(),
-        };
-      }),
+      listings: page.entities.map((e: any) => ({
+        entityKey: e.key,
+        invoiceId: String(e.attributes.invoiceId),
+        issuer: e.attributes.issuer,
+        debtor: e.attributes.debtor,
+        sector: e.attributes.sector,
+        faceValue: String(e.attributes.faceValue),
+        dueDate: Number(e.attributes.dueDate),
+        ratingBand: Number(e.attributes.ratingBand),
+        teaserRef: e.attributes.teaserRef,
+        docCommit: e.attributes.docCommit,
+        ensName: e.attributes.ensName,
+        sold: Boolean(e.attributes.sold),
+      })),
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

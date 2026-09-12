@@ -7,7 +7,7 @@
  * bytes are on Swarm, the asset is on Avalanche, and this is the index.
  */
 import { bool, dec, i32, str, u256, u64, addr } from "@arkiv-network/sdk/attr";
-import { eq, gte, lte } from "@arkiv-network/sdk/query";
+import { eq, gte, lte, and } from "@arkiv-network/sdk/query";
 import { ExpirationTime, jsonToPayload } from "@arkiv-network/sdk/utils";
 import { arkivPublic, arkivWallet } from "./client";
 import { listingAttributes, KIND, type ListingInput, type Sector } from "./schema";

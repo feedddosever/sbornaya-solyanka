@@ -20,7 +20,7 @@ import {
   uploadBlockedReason,
 } from "@/swarm/client";
 import { commitToReference } from "@/swarm/seal";
-import { CLAIM_ADDRESS, connectWallet, issueInvoice, explorerTx } from "@/fuji/claim";
+import { CLAIM_ADDRESS, issueInvoice, explorerTx } from "@/fuji/claim";
 
 type Step = "idle" | "swarm" | "chain" | "index" | "done";
 
@@ -93,10 +93,11 @@ export default function Issue() {
 
       // ---- 2. Avalanche: the claim, committing to the document -----------
       setStep("chain");
-      const account = await connectWallet(); // also forces the wallet onto Fuji
+      const [account] = (await (window as any).ethereum.request({
+        method: "eth_requestAccounts",
+      })) as `0x${string}`[];
 
-      // The minted id comes from the Issued event in the receipt.
-      const { hash: txHash, invoiceId } = await issueInvoice({
+      const txHash = await issueInvoice({
         account,
         debtor: debtor as `0x${string}`,
         faceValueHuman: faceValue,
@@ -106,12 +107,15 @@ export default function Issue() {
 
       // ---- 3. Arkiv: the queryable index --------------------------------
       setStep("index");
+      // In a fuller build, read the minted id from the Issued event; for the
+      // demo the deploy script keeps ids sequential and small.
+      const invoiceId = prompt("Token id from the Issued event?") ?? "1";
 
       const listed = await fetch("/api/arkiv/listings", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          invoiceId: invoiceId.toString(),
+          invoiceId,
           issuer: account,
           debtor,
           sector,

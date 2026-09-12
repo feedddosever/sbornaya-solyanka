@@ -10,14 +10,6 @@ import { i32, str, u256, u64 } from "@arkiv-network/sdk/attr";
 import { ExpirationTime, jsonToPayload } from "@arkiv-network/sdk/utils";
 import { arkivPublic, arkivWallet, currentBlock, secondsUntil } from "./client";
 import { bidAttributes, KIND, type BidInput } from "./schema";
-import {
-  asAddress,
-  asBigInt,
-  asDecimalString,
-  asNumber,
-  asString,
-  meta,
-} from "./entity";
 
 export interface LiveBid {
   entityKey: `0x${string}`;
@@ -77,22 +69,16 @@ export async function liveBidsFor(invoiceId: bigint, maxDiscountBps: number): Pr
     .limit(50)
     .fetch();
 
-  const bids: LiveBid[] = page.entities.map((e: any) => {
-    const a = e.attributes ?? {};
-    // `expiresAt` is a TOP-LEVEL property on the entity, not an attribute.
-    // You filter on `$expiresAt` in the query but you read `e.expiresAt`.
-    const { expiresAt } = meta(e);
-    return {
-      entityKey: e.key,
-      invoiceId: asBigInt(a.invoiceId),
-      financier: asAddress(a.financier),
-      discountBps: asNumber(a.discountBps),
-      offerPrice: asDecimalString(a.offerPrice),
-      ensName: asString(a.ensName),
-      expiresAtBlock: expiresAt,
-      secondsLeft: secondsUntil(expiresAt, block),
-    };
-  });
+  const bids: LiveBid[] = page.entities.map((e: any) => ({
+    entityKey: e.key,
+    invoiceId: BigInt(e.attributes.invoiceId),
+    financier: e.attributes.financier,
+    discountBps: Number(e.attributes.discountBps),
+    offerPrice: String(e.attributes.offerPrice),
+    ensName: String(e.attributes.ensName ?? ""),
+    expiresAtBlock: BigInt(e.attributes.$expiresAt ?? 0),
+    secondsLeft: secondsUntil(BigInt(e.attributes.$expiresAt ?? 0), block),
+  }));
 
   // Arkiv has no ORDER BY, so ranking happens here. Fine for a 50-row page,
   // wrong for a real book - noted in friction.md.

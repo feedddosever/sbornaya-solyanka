@@ -9,9 +9,7 @@ import {
   createWalletClient,
   custom,
   http,
-  keccak256,
   parseAbi,
-  parseEventLogs,
   defineChain,
   formatUnits,
   parseUnits,
@@ -63,20 +61,6 @@ export const erc20Abi = parseAbi([
 export const CLAIM_ADDRESS = process.env.NEXT_PUBLIC_CLAIM_ADDRESS as `0x${string}`;
 export const FUSD_ADDRESS = process.env.NEXT_PUBLIC_FUSD_ADDRESS as `0x${string}`;
 
-/** Fail loudly and usefully instead of letting viem throw something cryptic
- *  about an undefined address twenty frames deep. */
-export function requireAddresses() {
-  const missing: string[] = [];
-  if (!CLAIM_ADDRESS) missing.push("NEXT_PUBLIC_CLAIM_ADDRESS");
-  if (!FUSD_ADDRESS) missing.push("NEXT_PUBLIC_FUSD_ADDRESS");
-  if (missing.length) {
-    throw new Error(
-      `Missing ${missing.join(" and ")} in .env.local. Run ` +
-        `\`npm run contracts:deploy\` and paste the printed addresses.`,
-    );
-  }
-}
-
 export const fujiPublic = createPublicClient({ chain: fuji, transport: http() });
 
 /** Browser wallet, for the one layer where a real signature belongs.
@@ -84,62 +68,9 @@ export const fujiPublic = createPublicClient({ chain: fuji, transport: http() })
  *  user is never asked to switch networks mid-demo. */
 export function fujiWallet() {
   if (typeof window === "undefined" || !(window as any).ethereum) {
-    throw new Error("No injected wallet found. Install MetaMask or Core.");
+    throw new Error("no injected wallet found");
   }
   return createWalletClient({ chain: fuji, transport: custom((window as any).ethereum) });
-}
-
-const FUJI_HEX = "0xa869"; // 43113
-
-/**
- * Make sure the wallet is actually on Fuji before a write.
- *
- * Without this, a wallet sitting on mainnet signs against the wrong chain and
- * the failure surfaces as an unrelated revert — the worst possible thing to
- * debug in front of judges.
- */
-export async function ensureFuji(): Promise<void> {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error("No injected wallet found.");
-
-  const current = await eth.request({ method: "eth_chainId" });
-  if (current === FUJI_HEX) return;
-
-  try {
-    await eth.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: FUJI_HEX }],
-    });
-  } catch (e: any) {
-    // 4902 = chain unknown to the wallet; offer to add it.
-    if (e?.code === 4902 || /Unrecognized chain/i.test(String(e?.message))) {
-      await eth.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: FUJI_HEX,
-            chainName: "Avalanche Fuji C-Chain",
-            nativeCurrency: { name: "AVAX", symbol: "AVAX", decimals: 18 },
-            rpcUrls: ["https://api.avax-test.network/ext/bc/C/rpc"],
-            blockExplorerUrls: ["https://testnet.snowtrace.io"],
-          },
-        ],
-      });
-    } else {
-      throw e;
-    }
-  }
-}
-
-/** Connect, and guarantee we are on Fuji. Use this everywhere instead of
- *  calling eth_requestAccounts inline. */
-export async function connectWallet(): Promise<`0x${string}`> {
-  requireAddresses();
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error("No injected wallet found. Install MetaMask or Core.");
-  const [account] = (await eth.request({ method: "eth_requestAccounts" })) as `0x${string}`[];
-  await ensureFuji();
-  return account;
 }
 
 export interface OnChainInvoice {
@@ -191,26 +122,17 @@ export async function isEligible(who: `0x${string}`) {
   });
 }
 
-/**
- * Issue an invoice and return the minted token id.
- *
- * The id is read from the `Issued` event in the receipt. It is NOT the return
- * value of the transaction — a state-changing call gives you a hash, not the
- * function's return, so the event is the only way to learn the id. (An earlier
- * version of this app asked the user to type it in, which is exactly the kind
- * of thing that makes a demo look broken.)
- */
+/** Issue an invoice. `docHash` must be keccak256 of the ENCRYPTED Swarm
+ *  reference - a commitment, never the reference itself. */
 export async function issueInvoice(args: {
   account: `0x${string}`;
   debtor: `0x${string}`;
   faceValueHuman: string;
   dueDate: Date;
   docHash: `0x${string}`;
-}): Promise<{ hash: `0x${string}`; invoiceId: bigint }> {
-  requireAddresses();
+}) {
   const wallet = fujiWallet();
-
-  const hash = await wallet.writeContract({
+  return wallet.writeContract({
     account: args.account,
     address: CLAIM_ADDRESS,
     abi: claimAbi,
@@ -222,22 +144,6 @@ export async function issueInvoice(args: {
       args.docHash,
     ],
   });
-
-  const receipt = await fujiPublic.waitForTransactionReceipt({ hash });
-  const [issued] = parseEventLogs({
-    abi: claimAbi,
-    eventName: "Issued",
-    logs: receipt.logs,
-  });
-
-  if (!issued) {
-    throw new Error(
-      `Issued event not found in ${hash}. The transaction landed but the id ` +
-        `could not be read — check you are pointed at the right contract.`,
-    );
-  }
-
-  return { hash, invoiceId: (issued as any).args.id as bigint };
 }
 
 /**
@@ -288,17 +194,12 @@ export async function settleInvoice(account: `0x${string}`, id: bigint) {
 export const explorerTx = (hash: string) => `https://testnet.snowtrace.io/tx/${hash}`;
 export const explorerAddr = (a: string) => `https://testnet.snowtrace.io/address/${a}`;
 
-/**
- * Fit an Arkiv entity key into `bytes32` for `sell()`.
- *
- * Entity keys are 32 bytes today, so this is normally a pass-through. If a
- * future SDK returns a different width we hash instead of throwing: losing the
- * ability to accept a bid mid-demo over a key-format change would be a terrible
- * trade, and a keccak of the key is still a stable, verifiable reference to the
- * exact bid that was filled.
- */
+/** An Arkiv entity key is already 32 bytes; if a future SDK version returns a
+ *  different width, hash it so it still fits bytes32 on-chain. */
 export function toBytes32(key: string): `0x${string}` {
   const hex = key.startsWith("0x") ? key.slice(2) : key;
   if (hex.length === 64) return `0x${hex}` as `0x${string}`;
-  return keccak256(key.startsWith("0x") ? (key as `0x${string}`) : `0x${hex}`);
+  throw new Error(
+    `Arkiv entity key is ${hex.length / 2} bytes, not 32. Hash it with keccak256 before passing to sell().`,
+  );
 }
