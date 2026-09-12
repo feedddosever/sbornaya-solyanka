@@ -1,0 +1,16 @@
+node_modules/
+.tc/
+.next/
+out/
+.env
+.env.local
+*.log
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/
+
+# Keep the vendored libs out of git; restore with:
+#   cd contracts && forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts

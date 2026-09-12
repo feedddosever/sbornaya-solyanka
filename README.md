@@ -91,6 +91,14 @@ cd contracts
 forge test -vv                      # 23 tests, incl. fuzz over eligibility + settlement
 forge script script/Deploy.s.sol --rpc-url fuji --broadcast -vvv
 
+# 1b. each financier grants a standing FUSD allowance. `sell()` is called by
+#     the holder but pulls from the buyer, so without this the demo fails at
+#     the moment a bid is accepted.
+PRIVATE_KEY=<financier-1-key> FUSD_ADDRESS=0x.. CLAIM_ADDRESS=0x.. \
+  forge script script/Approve.s.sol --rpc-url fuji --broadcast
+PRIVATE_KEY=<financier-2-key> FUSD_ADDRESS=0x.. CLAIM_ADDRESS=0x.. \
+  forge script script/Approve.s.sol --rpc-url fuji --broadcast
+
 # 2. app
 cp .env.example .env.local          # paste the deployed addresses
 npm install

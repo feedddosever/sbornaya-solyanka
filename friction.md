@@ -14,10 +14,11 @@ real paths (`/start-here/installation/`, `/typescript-sdk/live-events/`,
 most SDK docs I've used. I deleted those items rather than ship them. What's
 left is verified, with repro steps.
 
-The single thing that would have prevented my whole wrong turn: **there is no
-`sitemap.xml` or `llms.txt` at the docs root**, so a wrong guess at the URL
-scheme fails silently instead of redirecting or suggesting. That is the one
-documentation fix I'd prioritise.
+For the record, `/sitemap-index.xml` does exist — I checked before writing this
+sentence, having already been wrong once. So the docs are fine and the mistake
+was mine. If there is a fix worth making it is a tiny one: a `404` page that
+links the sitemap, or an `llms.txt`, so a bad guess lands somewhere useful
+instead of a dead end.
 
 ---
 
