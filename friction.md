@@ -24,10 +24,10 @@ instead of a dead end.
 
 ## What got in the way
 
-### 1. A name the SDK validates is rejected by the node, with a self-contradictory error
+### 1. `Ident32` rejects uppercase; two places in the SDK promise it is allowed
 
-**Severity: highest in this list — it is a hard blocker, and the error message
-points away from the cause.**
+**Severity: highest in this list. It is a hard blocker, and both of the things a
+careful developer would consult point the wrong way.**
 
 Writing a bid failed with:
 
@@ -37,57 +37,81 @@ outside the name charset ("A"-"Z", "a"-"z", "0"-"9", ".", "-" and "_",
 with a letter first)
 ```
 
-Byte 8 of `discountBps` is the capital `B`. **The message lists `"A"-"Z"` as
-part of the permitted charset and then rejects a character from it.** Read
-literally, it says the name is invalid because it contains a valid character.
+Byte 8 of `discountBps` is the capital `B`. **The message lists `"A"-"Z"` among
+the permitted characters and then rejects one of them.** Read literally, it says
+the name is invalid because it contains a valid character.
 
-The client agrees with the message, not with the node. From the published
-bundle, `dist/attr-*.js`:
+Chasing it through `dist/` (v0.8.1) shows why, and the cause is not the engine:
 
 ```js
+// dist/index.js — the charset in the message is a fixed string
+const CHARSET = '"A"-"Z", "a"-"z", "0"-"9", ".", "-" and "_", with a letter first';
+
+case "Ident32InvalidByte": {
+  const position = Number(args[0] ?? 0);
+  return `an attribute name holds ${printable(String(args[1] ?? "0x00"))} at byte ${position}, which is outside the name charset (${CHARSET})`;
+}
+```
+
+```js
+// dist/attr-*.js — the exported validator agrees with CHARSET, not with the engine
 NAME_RE = /^[A-Za-z][A-Za-z0-9._-]*$/
 ```
 
-So `discountBps` passes `isValidAttributeName()` and `validateAttributeName()`
-locally, encodes, is signed, is submitted — and then the node refuses it. The
-SDK's exported validator does not agree with the chain it validates for, which
-makes it worse than no validator: it actively gives you the wrong answer.
+The engine reverts with `Ident32InvalidByte(uint256 position, bytes1 value)` —
+precise, correct data, `(8, 0x42)`. The SDK then decodes it and substitutes a
+hardcoded charset description that does not match `Ident32`'s actual rule. So:
 
-**What it cost.** Eleven of Factor's twenty attribute names were camelCase.
-Every write failed, the market stayed empty, and the visible symptom was
-"listings: 0" — which reads as a funding problem or a query problem, not a
-naming one. Queries kept working the whole time, because a query over a name
-nothing could ever write simply matches nothing. Nothing before an actual
-signed write surfaces this: not `tsc`, not the SDK's own validator, not a read.
+- `isValidAttributeName("discountBps")` returns **`true`**. A developer who
+  validates before writing — the careful thing to do — gets a false green light.
+- The error message then describes a charset that would have permitted the name
+  it just refused, so it reads as an SDK bug rather than as "rename your field".
+
+**Credit where it is due:** the revert is caught at simulation, not after
+broadcast. My signer's nonce stayed at 0 and its balance was untouched across
+several failed writes, so nothing was wasted but time. The comment above
+`describeEntityRevert` also says the engine's errors "carry enough to name the
+actual problem, so this spends the args rather than printing them" — the intent
+is clearly to be more helpful than a raw revert dump, and for the other twenty
+or so branches it is. This one branch just happens to assert something false,
+which is worse than printing nothing: a neutral `(8, 0x42)` would have sent me
+to the byte immediately.
+
+**What it cost.** Eleven of Factor's twenty attribute names were camelCase, so
+every write failed and the market stayed empty. The visible symptom was
+`listings: 0`, which reads as an unfunded signer or a broken query — not as a
+naming problem. Queries kept succeeding throughout, because a query over a name
+nothing can write simply matches nothing. Nothing upstream catches it: not
+`tsc`, not the SDK's own validator, not a read.
 
 **Repro.** One entity, one attribute:
 
 ```ts
+isValidAttributeName("camelCase"); // true
 await arkivWallet(pk).createEntity({
   attributes: { project: str("x"), camelCase: str("y") },
   expires: ExpirationTime.fromSeconds(60),
 });
-// isValidAttributeName("camelCase") === true
-// node: rejects at the byte index of the capital C
+// reverts Ident32InvalidByte(5, 0x43)
 ```
 
-**Fixes, in order of value.**
+**Fix, in order of value.**
 
-1. Make the two rules agree. Either the node accepts `[A-Za-z]` as both it and
-   `NAME_RE` claim, or `NAME_RE` becomes `/^[a-z][a-z0-9._-]*$/` and the error
-   message stops listing `"A"-"Z"`.
-2. Until then, say so in the docs. Every example in the best-practices guide is
-   snake_case (`entity_type`, `proposal_key`), so the working convention is
-   already there implicitly — one sentence would make it explicit. I did notice
-   the pattern afterwards, which is exactly when noticing is useless.
-3. If the charset really is lowercase-only, the message should name the
-   attribute, not just a byte offset. `attribute "discountBps": uppercase not
-   permitted after position 0` would have ended this in ten seconds instead of
-   a debugging round.
+1. Make the three agree. If `Ident32` is lowercase-only, then `NAME_RE` becomes
+   `/^[a-z][a-z0-9._-]*$/` and `CHARSET` drops `"A"-"Z"`. Two one-line changes
+   and this class of bug is gone, with `isValidAttributeName` catching it
+   locally before a transaction is ever built.
+2. Name the attribute in the message. `attribute "discountBps": uppercase is
+   not permitted after position 0` would have ended this in ten seconds. The
+   caller knows the names it just encoded, so this is available at the point of
+   failure.
+3. Say it in the docs. Every example in the best-practices guide is snake_case
+   (`entity_type`, `proposal_key`), so the working convention is already there
+   implicitly — one sentence would make it explicit.
 
 Factor now uses snake_case throughout (`discount_bps`, `invoice_id`,
-`face_value`), and the reason is recorded at the top of `src/arkiv/schema.ts`
-so nobody on the project reintroduces a camelCase name later.
+`face_value`), and the reason is recorded at the top of `src/arkiv/schema.ts` so
+nobody reintroduces a camelCase name later.
 
 ### 2. The Live Events example builds exactly the thing Mission 03 disqualifies
 
